@@ -31,24 +31,42 @@ def elo_update(idx, prev_val):
     return new_val
 
 if __name__ == '__main__':
-    C = 4
-    N = 10
+    # C = 4
+    # N = 10
+
+    # schedule = jnp.array(
+    #     [[0, 0, 1],
+    #      [0, 1, 2],
+    #      [1, 1, 2],
+    #      [2, 0, 3],
+    #      [2, 3, 1],
+    #      [2, 3, 0],
+    #      [3, 2, 0],
+    #      [5, 2, 3],
+    #      [5, 3, 1],
+    #      [5, 1, 0]]
+    # )
+    # outcomes = jnp.array([1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
+
+
+    lol = load_dataset("EsportsBench/EsportsBench", split="league_of_legends").to_pandas()
+    dataset = MatchupDataset(
+        df=lol,
+        competitor_cols=["competitor_1", "competitor_2"],
+        outcome_col="outcome",
+        datetime_col="date",
+        rating_period="7D"
+    )
+
+    C = dataset.num_competitors
+    N = len(dataset)
+
+    time_steps = jnp.array(dataset.time_steps)
+    matchups = jnp.array(dataset.matchups)
+    schedule = jnp.column_stack((time_steps, matchups))
+    outcomes = jnp.array(dataset.outcomes)
 
     ratings = jnp.zeros(C, dtype=jnp.float32)
-    schedule = jnp.array(
-        [[0, 0, 1],
-         [0, 1, 2],
-         [1, 1, 2],
-         [2, 0, 3],
-         [2, 3, 1],
-         [2, 3, 0],
-         [3, 2, 0],
-         [5, 2, 3],
-         [5, 3, 1],
-         [5, 1, 0]]
-    )
-    outcomes = jnp.array([1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0])
-
     running_grads = jnp.zeros(C)
         
 
@@ -67,14 +85,3 @@ if __name__ == '__main__':
         init_val=init_val,
     )
     print(new_ratings)
-
-    # elo_update(0, init_val)
-
-    lol = load_dataset("EsportsBench/EsportsBench", split="league_of_legends").to_pandas()
-    dataset = MatchupDataset(
-        df=lol,
-        competitor_cols=["competitor_1", "competitor_2"],
-        outcome_col="outcome",
-        datetime_col="date",
-        rating_period="7D"
-    )
