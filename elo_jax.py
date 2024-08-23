@@ -1,5 +1,7 @@
 import jax
 import jax.numpy as jnp
+from datasets import load_dataset
+from riix.utils.data_utils import MatchupDataset
 
 def sigmoid(x):
     return 1.0 / (1.0 + jnp.exp(-x))
@@ -67,3 +69,12 @@ if __name__ == '__main__':
     print(new_ratings)
 
     # elo_update(0, init_val)
+
+    lol = load_dataset("EsportsBench/EsportsBench", split="league_of_legends").to_pandas()
+    dataset = MatchupDataset(
+        df=lol,
+        competitor_cols=["competitor_1", "competitor_2"],
+        outcome_col="outcome",
+        datetime_col="date",
+        rating_period="7D"
+    )
