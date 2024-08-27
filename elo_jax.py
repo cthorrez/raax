@@ -48,17 +48,18 @@ def online_elo_update(idx, prev_val):
 def batched_elo_update(carry, x):
     ratings = carry['ratings']
     running_grads = carry['running_grads']
+    update_flag = x['update_mask']
+    ratings = ratings + (update_flag * running_grads)
+    running_grads = running_grads * (1 - update_flag)
     comp_idxs = x['schedule'][1:]
     comp_ratings = ratings[comp_idxs]
     outcome = x['outcomes']
-    update_flag = x['update_mask']
     grad = elo_grad(comp_ratings, outcome)
     new_running_grads = running_grads.at[comp_idxs].add(grad)
 
-    new_ratings = ratings + (update_flag * running_grads)
-    new_running_grads = running_grads * (1 - update_flag)
+
     new_carry = {
-        'ratings': new_ratings,
+        'ratings': ratings,
         'running_grads': new_running_grads,
     }
     return new_carry, None
@@ -122,7 +123,7 @@ def run_batched_raax_elo(dataset):
         init=init_val,
         xs=xs,
     )
-    new_ratings = np.asarray(final_val['ratings'])
+    new_ratings = np.asarray(final_val['ratings']) + np.asarray(final_val['running_grads'])
     return new_ratings
 
 
