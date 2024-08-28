@@ -45,12 +45,26 @@ def online_elo_update(idx, prev_val):
     }
     return new_val
 
+def do_update(ratings, running_grads):
+    return ratings + running_grads, jnp.zeros_like(running_grads)
+
+def do_nothing(ratings, running_grads):
+    return ratings, running_grads
+
 def batched_elo_update(carry, x):
     ratings = carry['ratings']
     running_grads = carry['running_grads']
     update_flag = x['update_mask']
-    ratings = ratings + (update_flag * running_grads)
-    running_grads = running_grads * (1 - update_flag)
+
+    ratings, running_grads = jax.lax.cond(
+        update_flag,
+        do_update,
+        do_nothing,
+        ratings,
+        running_grads
+    )
+    # ratings = ratings + (update_flag * running_grads)
+    # running_grads = running_grads * (1 - update_flag)
     comp_idxs = x['schedule'][1:]
     comp_ratings = ratings[comp_idxs]
     outcome = x['outcomes']
@@ -131,6 +145,7 @@ if __name__ == '__main__':
     start_time = time.time()
     split = 'league_of_legends'
     # split = 'starcraft2'
+    split='tetris'
     lol = load_dataset("EsportsBench/EsportsBench", split=split).to_pandas()
     dataset = MatchupDataset(
         df=lol,
@@ -151,7 +166,7 @@ if __name__ == '__main__':
 
     start_time = time.time()
     batched_riix_ratings = run_riix_elo(dataset, 'batched')
-    print(f'online batched fit time: {time.time() - start_time}')
+    print(f'batched riix fit time: {time.time() - start_time}')
 
     start_time = time.time()
     batched_raxx_ratings = run_batched_raax_elo(dataset)
