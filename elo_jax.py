@@ -6,6 +6,8 @@ from datasets import load_dataset
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
 
+jax.default_device = jax.devices("cpu")[0]
+
 def sigmoid(x):
     return 1.0 / (1.0 + jnp.exp(-x))
 
@@ -17,12 +19,18 @@ def elo_loss(ratings, outcome):
 
 elo_grad = jax.grad(elo_loss, argnums=0)
 
+def elo_grad_hard(ratings, outcome):
+    prob = jax.nn.sigmoid(ratings[0] - ratings[1])
+    grad = outcome - prob
+    return jnp.array([grad, -grad])
+
 def online_elo_update(idx, prev_val):
     ratings = prev_val['ratings']
     comp_idxs = prev_val['schedule'][idx,1:]
     comp_ratings = ratings[comp_idxs]
     outcome = prev_val['outcomes'][idx]
-    grad = elo_grad(comp_ratings, outcome)
+    grad = elo_grad_hard(comp_ratings, outcome)
+    # grad = elo_grad(comp_ratings, outcome)
     new_ratings = ratings.at[comp_idxs].add(grad)
     new_val = {
         'ratings': new_ratings,
@@ -31,19 +39,6 @@ def online_elo_update(idx, prev_val):
     }
     return new_val
 
-def online_elo_update(idx, prev_val):
-    ratings = prev_val['ratings']
-    comp_idxs = prev_val['schedule'][idx,1:]
-    comp_ratings = ratings[comp_idxs]
-    outcome = prev_val['outcomes'][idx]
-    grad = elo_grad(comp_ratings, outcome)
-    new_ratings = ratings.at[comp_idxs].add(grad)
-    new_val = {
-        'ratings': new_ratings,
-        'schedule': prev_val['schedule'],
-        'outcomes': prev_val['outcomes']
-    }
-    return new_val
 
 def do_update(ratings, running_grads):
     return ratings + running_grads, jnp.zeros_like(running_grads)
@@ -132,27 +127,28 @@ def run_batched_raax_elo(dataset):
         'ratings': ratings,
         'running_grads': running_grads,
     }
-    final_val, _ = jax.lax.scan(
+    final_val, y = jax.lax.scan(
         f=batched_elo_update,
         init=init_val,
         xs=xs,
     )
+    print('!!!!', y['ratings'].shape)
     new_ratings = np.asarray(final_val['ratings']) + np.asarray(final_val['running_grads'])
     return new_ratings
 
 
 if __name__ == '__main__':
     start_time = time.time()
-    split = 'league_of_legends'
-    # split = 'starcraft2'
-    split='tetris'
+    # split = 'league_of_legends'
+    split = 'starcraft2'
+    # split='tetris'
     lol = load_dataset("EsportsBench/EsportsBench", split=split).to_pandas()
     dataset = MatchupDataset(
         df=lol,
         competitor_cols=["competitor_1", "competitor_2"],
         outcome_col="outcome",
         datetime_col="date",
-        rating_period="7D"
+        rating_period="1D"
     )
     print(f'data load duration: {time.time() - start_time}')
 
