@@ -1,15 +1,12 @@
-import time
-import numpy as np
+import math
 import jax
 import jax.numpy as jnp
-from datasets import load_dataset
-from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
 from functools import partial
 from data_utils import gimmie_data
 
 def log_loss(probs, outcomes):
-    return (outcomes * jnp.log(probs) + (1.0 - outcomes) * jnp.log(1.0 - probs)).mean()
+    return -(outcomes * jnp.log(probs) - (1.0 - outcomes) * jnp.log(1.0 - probs)).mean()
 
 def acc(probs, outcomes):
     corr = ((probs > 0.5) == outcomes).astype(jnp.float32).sum() + (0.5 * (probs == 0.5).astype(jnp.float32)).sum()
@@ -52,7 +49,7 @@ class Elo(RatingSystem):
     def _update_fun(ratings, x, scale, k):
         competitors = x['matchups']
         outcome = x['outcomes']
-        logit = (jnp.log(10.0)/scale) * (ratings[competitors] * jnp.array([1.0, -1.0])).sum()
+        logit = (jnp.log(10.0) / scale) * (ratings[competitors] * jnp.array([1.0, -1.0])).sum()
         prob = jax.nn.sigmoid(logit)
         update = k * (outcome - prob)
         new_ratings = ratings.at[competitors[0]].add(update)
@@ -61,7 +58,7 @@ class Elo(RatingSystem):
 
 
 def clayto_loss(locs, scales, outcome):
-    z = jnp.sqrt(jnp.square(scales).sum())
+    z = jnp.log(10.0) / jnp.sqrt(jnp.square(scales).sum())
     logit = z * (locs * jnp.array([1.0, -1.0])).sum()
     prob = jax.nn.sigmoid(logit)
     loss = outcome * jnp.log(prob) + (1.0 - outcome) * jnp.log(1.0 - prob)
@@ -89,14 +86,6 @@ class Clayto(RatingSystem):
 
 
     @staticmethod
-    def loss(locs, scales, outcome):
-        z = jnp.sqrt(jnp.square(scales).sum())
-        logit = z * locs * jnp.array([1.0, -1.0])
-        prob = jax.nn.sigmoid(logit)
-        loss = outcome * jnp.log(prob) + (1.0 - outcome) * jnp.log(1.0 - prob)
-        return loss, prob
-    
-    @staticmethod
     def _update_fun(prev_val, x, lr):
         competitors = x['matchups']
         outcome = x['outcomes']
@@ -106,35 +95,47 @@ class Clayto(RatingSystem):
         grad, prob = clayto_grad(c_locs, c_scales, outcome)
         new_locs = locs.at[competitors].add(lr * grad[0])
         new_scales = scales.at[competitors].add(lr * grad[1])
-  
         return (new_locs, new_scales), prob
-    
-
         
 def main():
-    matchups, outcomes = gimmie_data('league_of_legends')
+    # game = 'league_of_legends'
+    game = 'starcraft2'
+    matchups, outcomes = gimmie_data(game)
+    test_frac = 0.2
+    test_idx = int(matchups.shape[0] * (1.0 - test_frac))
     num_competitors = jnp.unique(matchups).max()
-    elo = Elo(num_competitors=num_competitors)
+    # elo_scale = 1.0
+    # elo_k = 0.025
+    elo_scale = 400.0
+    elo_k = 32.0
+
+    elo = Elo(
+        num_competitors=num_competitors,
+        loc=0.0,
+        scale=elo_scale,
+        k=elo_k
+    )
     ratings, probs = elo.run(matchups, outcomes)
     print('ratings', ratings.min(), ratings.max())
     print('probs', probs.min(), probs.mean(), probs.max())
-    print('log loss', log_loss(probs[-10000:], outcomes[-10000:]))
-    print('acc', acc(probs[-10000:], outcomes[-10000:]))
+    print('log loss', log_loss(probs[test_idx:], outcomes[test_idx:]))
+    print('acc', acc(probs[test_idx:], outcomes[test_idx:]))
 
-
+    clayto_scale = elo_scale / math.sqrt(2.0)
+    clayto_lr = elo_k / (math.log(10.0) / elo_scale)
 
     clayto = Clayto(
         num_competitors=num_competitors,
         loc=0.0,
-        scale=1.0,
-        lr=0.2,
+        scale=clayto_scale,
+        lr=clayto_lr,
     )
     (locs, scales), probs = clayto.run(matchups, outcomes)
     print('locs:', locs.min(), locs.max())
     print('scales:', scales.min(), scales.mean(), scales.max())
     print('probs', probs.min(), probs.mean(), probs.max())
-    print('log loss', log_loss(probs[-10000:], outcomes[-10000:]))
-    print('acc', acc(probs[-10000:], outcomes[-10000:]))
+    print('log loss', log_loss(probs[test_idx:], outcomes[test_idx:]))
+    print('acc', acc(probs[test_idx:], outcomes[test_idx:]))
 
 
 
