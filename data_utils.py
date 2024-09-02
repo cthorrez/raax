@@ -11,11 +11,11 @@ def gimmie_data(game):
         os.makedirs('data', exist_ok=True)
         df = load_dataset('EsportsBench/EsportsBench', split=game).to_polars()
         df.write_parquet(f'data/{game}.parquet')
-        df = df.to_pandas
+        df = df.to_pandas()
     dataset = MatchupDataset(
         df=df,
         competitor_cols=['competitor_1', 'competitor_2'],
         outcome_col='outcome',
         datetime_col='date'
     )
-    return jnp.asarray(dataset.matchups), jnp.asarray(dataset.outcomes)
+    return jnp.asarray(dataset.matchups), jnp.asarray(dataset.outcomes), dataset.num_competitors

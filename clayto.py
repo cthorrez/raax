@@ -6,7 +6,7 @@ from functools import partial
 from data_utils import gimmie_data
 
 def log_loss(probs, outcomes):
-    return -(outcomes * jnp.log(probs) - (1.0 - outcomes) * jnp.log(1.0 - probs)).mean()
+    return -(outcomes * jnp.log(probs) + (1.0 - outcomes) * jnp.log(1.0 - probs)).mean()
 
 def acc(probs, outcomes):
     corr = ((probs > 0.5) == outcomes).astype(jnp.float32).sum() + (0.5 * (probs == 0.5).astype(jnp.float32)).sum()
@@ -55,6 +55,21 @@ class Elo(RatingSystem):
         new_ratings = ratings.at[competitors[0]].add(update)
         new_ratings = new_ratings.at[competitors[1]].add(-update)
         return new_ratings, prob
+    
+    def run(self, matchups, outcomes, ks):
+        update_fun = partial(self._update_fun, scale=self.scale)
+        def run_single(matchups, outcomes, k):
+            final_val, probs = jax.lax.scan(
+                f=partial(update_fun, k=k),
+                init=self.init_val,
+                xs={'matchups': matchups, 'outcomes': outcomes},
+            )
+            return final_val, probs
+        run_many = jax.vmap(run_single, in_axes=(None, None, 0))
+
+        final_vals, final_probs = run_many(matchups, outcomes, ks)
+        print(final_vals.shape, final_probs.shape)
+        return final_vals.mean(axis=0), final_probs.mean(axis=0)
 
 
 def clayto_loss(locs, scales, outcome):
@@ -100,10 +115,13 @@ class Clayto(RatingSystem):
 def main():
     # game = 'league_of_legends'
     game = 'starcraft2'
-    matchups, outcomes = gimmie_data(game)
+    # game = 'smash_melee'
+    # game = 'dota2'
+    # game = 'rocket_league'
+
+    matchups, outcomes, num_competitors = gimmie_data(game)
     test_frac = 0.2
     test_idx = int(matchups.shape[0] * (1.0 - test_frac))
-    num_competitors = jnp.unique(matchups).max()
     # elo_scale = 1.0
     # elo_k = 0.025
     elo_scale = 400.0
@@ -115,7 +133,9 @@ def main():
         scale=elo_scale,
         k=elo_k
     )
-    ratings, probs = elo.run(matchups, outcomes)
+    ks = jnp.array([32.0])
+    ks = jnp.linspace(start=16, stop=64, num=1000)
+    ratings, probs = elo.run(matchups, outcomes, ks=ks)
     print('ratings', ratings.min(), ratings.max())
     print('probs', probs.min(), probs.mean(), probs.max())
     print('log loss', log_loss(probs[test_idx:], outcomes[test_idx:]))
