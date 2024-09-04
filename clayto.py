@@ -5,48 +5,81 @@ from riix.models.elo import Elo
 from functools import partial
 from data_utils import gimmie_data
 
-def log_loss(probs, outcomes):
-    return -(outcomes * jnp.log(probs) + (1.0 - outcomes) * jnp.log(1.0 - probs)).mean()
+def generate_hyperparam_grid(param_ranges, num_samples, seed=0):
+    key = jax.random.PRNGKey(seed)
+    grid = {}
+    for param, (min_val, max_val) in param_ranges.items():
+        key, subkey = jax.random.split(key)
+        grid[param] = jax.random.uniform(subkey, (num_samples,), minval=min_val, maxval=max_val)
+    
+    return grid
 
-def acc(probs, outcomes):
-    corr = ((probs > 0.5) == outcomes).astype(jnp.float32).sum() + (0.5 * (probs == 0.5).astype(jnp.float32)).sum()
-    return corr / outcomes.shape[0]
+
+def log_loss(probs, outcomes, axis=0):
+    return -(outcomes * jnp.log(probs) + (1.0 - outcomes) * jnp.log(1.0 - probs)).mean(axis=axis)
+
+def acc(probs, outcomes, axis=0):
+    corr = ((probs > 0.5) == outcomes).astype(jnp.float32).sum(axis=axis) + (0.5 * (probs == 0.5).astype(jnp.float32)).sum(axis=axis)
+    return corr / outcomes.shape[axis]
 
 class RatingSystem:
-    init_val: None
-
-    def __init__(self, num_competitors:int):
+    def __init__(self, num_competitors: int):
         self.num_competitors = num_competitors
 
     @staticmethod
     def update_fun(carry, x):
         raise NotImplementedError
 
+    def initialize(self, **params):
+        raise NotImplementedError
+
     def run(self, matchups, outcomes):
+        init_val = self.initialize(**self.params)
+        return self._run(matchups, outcomes, init_val, **self.params)
+
+    def _run(self, matchups, outcomes, init_val, **params):
+        update_fun = partial(self.update_fun, **params)
         final_val, probs = jax.lax.scan(
-            f=self.update_fun,
-            init=self.init_val,
+            f=update_fun,
+            init=init_val,
             xs={'matchups': matchups, 'outcomes': outcomes},
         )
         return final_val, probs
+
+    def sweep(self, matchups, outcomes, sweep_params):
+        fixed_params = {k: v for k, v in self.params.items() if k not in sweep_params}
+
+        def run_single(matchups, outcomes, sweep_params):
+            all_params = {**fixed_params, **sweep_params}
+            init_val = self.initialize(**all_params)
+            return self._run(matchups, outcomes, init_val, **all_params)
+
+        in_axes = (None, None, {param: 0 for param in sweep_params})
+        run_many = jax.vmap(run_single, in_axes=in_axes)
+
+        final_vals, final_probs = run_many(matchups, outcomes, sweep_params)
+        loss = log_loss(final_probs, jnp.expand_dims(outcomes, 0), axis=1)
+        accuracy = acc(final_probs, jnp.expand_dims(outcomes, 0), axis=1)
+        best_idx = jnp.nanargmax(accuracy)
+        # best_idx = jnp.nanargmin(loss)
+        return final_vals, final_probs, best_idx
 
 class Elo(RatingSystem):
     def __init__(
         self,
         num_competitors,
-        loc = 1500.0,
-        scale = 400.0,
-        k = 32.0
+        loc=1500.0,
+        scale=400.0,
+        k=32.0
     ):
         super().__init__(num_competitors)
-        ratings = jnp.zeros(self.num_competitors) + loc
-        self.scale = scale
-        self.init_val = ratings
-        self.k = k
-        self.update_fun = partial(self._update_fun, scale=self.scale, k=self.k)
+        self.params = {'loc': loc, 'scale': scale, 'k': k}
+
+    def initialize(self, loc, **kwargs):
+        return jnp.full(self.num_competitors, loc)
 
     @staticmethod
-    def _update_fun(ratings, x, scale, k):
+    def update_fun(ratings, x, scale, k, **kwargs):
         competitors = x['matchups']
         outcome = x['outcomes']
         logit = (jnp.log(10.0) / scale) * (ratings[competitors] * jnp.array([1.0, -1.0])).sum()
@@ -55,22 +88,6 @@ class Elo(RatingSystem):
         new_ratings = ratings.at[competitors[0]].add(update)
         new_ratings = new_ratings.at[competitors[1]].add(-update)
         return new_ratings, prob
-    
-    def run(self, matchups, outcomes, ks):
-        update_fun = partial(self._update_fun, scale=self.scale)
-        def run_single(matchups, outcomes, k):
-            final_val, probs = jax.lax.scan(
-                f=partial(update_fun, k=k),
-                init=self.init_val,
-                xs={'matchups': matchups, 'outcomes': outcomes},
-            )
-            return final_val, probs
-        run_many = jax.vmap(run_single, in_axes=(None, None, 0))
-
-        final_vals, final_probs = run_many(matchups, outcomes, ks)
-        print(final_vals.shape, final_probs.shape)
-        return final_vals.mean(axis=0), final_probs.mean(axis=0)
-
 
 def clayto_loss(locs, scales, outcome):
     z = jnp.log(10.0) / jnp.sqrt(jnp.square(scales).sum())
@@ -89,23 +106,24 @@ class Clayto(RatingSystem):
     def __init__(
         self,
         num_competitors,
-        loc = 0.0,
-        scale = 1.0,
-        lr = 0.01,
+        loc=0.0,
+        scale=1.0,
+        lr=0.01,
     ):
         super().__init__(num_competitors)
-        locs = jnp.zeros(num_competitors) + loc
-        scales = jnp.zeros(num_competitors) + scale
-        self.init_val = (locs, scales)
-        self.update_fun = partial(self._update_fun, lr=lr)
+        self.params = {'loc': loc, 'scale': scale, 'lr': lr}
 
+    def initialize(self, loc, scale, **kwargs):
+        locs = jnp.full(self.num_competitors, loc)
+        scales = jnp.full(self.num_competitors, scale)
+        return (locs, scales)
 
     @staticmethod
-    def _update_fun(prev_val, x, lr):
+    def update_fun(prev_val, x, lr, **kwargs):
         competitors = x['matchups']
         outcome = x['outcomes']
         locs, scales = prev_val
-        c_locs = locs[competitors]  
+        c_locs = locs[competitors]
         c_scales = scales[competitors]
         grad, prob = clayto_grad(c_locs, c_scales, outcome)
         new_locs = locs.at[competitors].add(lr * grad[0])
@@ -113,8 +131,8 @@ class Clayto(RatingSystem):
         return (new_locs, new_scales), prob
         
 def main():
-    # game = 'league_of_legends'
-    game = 'starcraft2'
+    game = 'league_of_legends'
+    # game = 'starcraft2'
     # game = 'smash_melee'
     # game = 'dota2'
     # game = 'rocket_league'
@@ -133,13 +151,13 @@ def main():
         scale=elo_scale,
         k=elo_k
     )
-    ks = jnp.array([32.0])
-    ks = jnp.linspace(start=16, stop=64, num=1000)
-    ratings, probs = elo.run(matchups, outcomes, ks=ks)
-    print('ratings', ratings.min(), ratings.max())
-    print('probs', probs.min(), probs.mean(), probs.max())
-    print('log loss', log_loss(probs[test_idx:], outcomes[test_idx:]))
-    print('acc', acc(probs[test_idx:], outcomes[test_idx:]))
+    sweep_params = generate_hyperparam_grid({'scale' : (100,1000), 'k' : {1, 200}}, num_samples=2000)
+    locs, probs, best_idx = elo.sweep(matchups, outcomes, sweep_params)
+
+    print('locs:', locs[best_idx].min(), locs[best_idx].max())
+    print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
+    print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
+    print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
 
     clayto_scale = elo_scale / math.sqrt(2.0)
     clayto_lr = elo_k / (math.log(10.0) / elo_scale)
@@ -150,12 +168,19 @@ def main():
         scale=clayto_scale,
         lr=clayto_lr,
     )
-    (locs, scales), probs = clayto.run(matchups, outcomes)
-    print('locs:', locs.min(), locs.max())
-    print('scales:', scales.min(), scales.mean(), scales.max())
-    print('probs', probs.min(), probs.mean(), probs.max())
-    print('log loss', log_loss(probs[test_idx:], outcomes[test_idx:]))
-    print('acc', acc(probs[test_idx:], outcomes[test_idx:]))
+    scale_ranges = (100 / math.sqrt(2.0), 1000 / math.sqrt(2))
+    lr_ranges = (1 / (math.log(10.0) / 100), 200 / (math.log(10.0) / 1000))
+    print(scale_ranges)
+    print(lr_ranges)
+    
+    sweep_params = generate_hyperparam_grid({'scale' : scale_ranges, 'lr' : lr_ranges}, num_samples=2000)
+    
+    (locs, scales), probs, best_idx = clayto.sweep(matchups, outcomes, sweep_params)
+    print('locs:', locs[best_idx].min(), locs[best_idx].max())
+    print('scales:', scales[best_idx].min(), scales[best_idx].mean(), scales[best_idx].max())
+    print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
+    print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
+    print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
 
 
 
