@@ -1,3 +1,4 @@
+import time
 import math
 import jax
 import jax.numpy as jnp
@@ -5,12 +6,14 @@ from riix.models.elo import Elo
 from functools import partial
 from data_utils import gimmie_data
 
+jax.config.update("jax_enable_x64", True)
+
 def generate_hyperparam_grid(param_ranges, num_samples, seed=0):
     key = jax.random.PRNGKey(seed)
     grid = {}
     for param, (min_val, max_val) in param_ranges.items():
         key, subkey = jax.random.split(key)
-        grid[param] = jax.random.uniform(subkey, (num_samples,), minval=min_val, maxval=max_val)
+        grid[param] = jax.random.uniform(subkey, (num_samples,), minval=min_val, maxval=max_val, dtype=jnp.float64)
     
     return grid
 
@@ -47,6 +50,7 @@ class RatingSystem:
         return final_val, probs
 
     def sweep(self, matchups, outcomes, sweep_params):
+        start_time = time.time()
         fixed_params = {k: v for k, v in self.params.items() if k not in sweep_params}
 
         def run_single(matchups, outcomes, sweep_params):
@@ -60,8 +64,12 @@ class RatingSystem:
         final_vals, final_probs = run_many(matchups, outcomes, sweep_params)
         loss = log_loss(final_probs, jnp.expand_dims(outcomes, 0), axis=1)
         accuracy = acc(final_probs, jnp.expand_dims(outcomes, 0), axis=1)
-        best_idx = jnp.nanargmax(accuracy)
-        # best_idx = jnp.nanargmin(loss)
+        # best_idx = jnp.nanargmax(accuracy)
+        best_idx = jnp.nanargmin(loss)
+        duration = time.time() - start_time
+        print(f'duration (s): {duration:0.4f}')
+        for param, vals in sweep_params.items():
+            print(f'best {param}: {vals[best_idx]}')
         return final_vals, final_probs, best_idx
 
 class Elo(RatingSystem):
@@ -91,8 +99,9 @@ class Elo(RatingSystem):
 
 def clayto_loss(locs, scales, outcome):
     z = jnp.log(10.0) / jnp.sqrt(jnp.square(scales).sum())
-    logit = z * (locs * jnp.array([1.0, -1.0])).sum()
+    logit = z * (locs * jnp.array([1.0, -1.0], dtype=jnp.float64)).sum()
     prob = jax.nn.sigmoid(logit)
+    # loss = -jax.nn.softplus(jnp.where(outcome, -logit, logit)) # should be identical and more stable but gets worse results on some datasets :/
     loss = outcome * jnp.log(prob) + (1.0 - outcome) * jnp.log(1.0 - prob)
     return loss, prob
 
@@ -114,8 +123,8 @@ class Clayto(RatingSystem):
         self.params = {'loc': loc, 'scale': scale, 'lr': lr}
 
     def initialize(self, loc, scale, **kwargs):
-        locs = jnp.full(self.num_competitors, loc)
-        scales = jnp.full(self.num_competitors, scale)
+        locs = jnp.full(self.num_competitors, loc, dtype=jnp.float64)
+        scales = jnp.full(self.num_competitors, scale, dtype=jnp.float64)
         return (locs, scales)
 
     @staticmethod
@@ -129,13 +138,55 @@ class Clayto(RatingSystem):
         new_locs = locs.at[competitors].add(lr * grad[0])
         new_scales = scales.at[competitors].add(lr * grad[1])
         return (new_locs, new_scales), prob
+
+
+class Omnelo(RatingSystem):
+    def __init__(
+        self,
+        num_competitors,
+        loc=0.0,
+        scale=1.0,
+        loc_lr=1e-3,
+        scale_lr=1e-5,
+        cdf=jax.scipy.stats.logistic.cdf,
+    ):
+        super().__init__(num_competitors)
+        self.params = {'loc': loc, 'scale': scale, 'loc_lr': loc_lr, 'scale_lr': scale_lr}
+        
+        def loss_and_prob(locs, scales, outcome):
+            scale = jnp.sqrt(jnp.square(scales).sum())
+            logit = (locs * jnp.array([1.0, -1.0], dtype=jnp.float64)).sum() / scale
+            prob = cdf(logit)
+            # loss = -jax.nn.softplus(jnp.where(outcome, -logit, logit)) # should be identical and more stable but gets worse results on some datasets :/
+            loss = outcome * jnp.log(prob) + (1.0 - outcome) * jnp.log(1.0 - prob)
+            return loss, prob
+        
+        self.grad = jax.grad(loss_and_prob, argnums=(0,1), has_aux=True)
+
+    def initialize(self, loc, scale, **kwargs):
+        locs = jnp.full(self.num_competitors, loc)
+        scales = jnp.full(self.num_competitors, scale)
+        return (locs, scales)
+    
+    def update_fun(self, prev_val, x, loc_lr, scale_lr, **kwargs):
+        competitors = x['matchups']
+        outcome = x['outcomes']
+        locs, scales = prev_val
+        c_locs = locs[competitors]
+        c_scales = scales[competitors]
+        grad, prob = self.grad(c_locs, c_scales, outcome)
+        new_locs = locs.at[competitors].add(loc_lr * grad[0])
+        new_scales = scales.at[competitors].add(scale_lr * grad[1])
+        return (new_locs, new_scales), prob
         
 def main():
     game = 'league_of_legends'
+    # game = 'tetris'
     # game = 'starcraft2'
     # game = 'smash_melee'
     # game = 'dota2'
     # game = 'rocket_league'
+    # game = 'street_fighter'
 
     matchups, outcomes, num_competitors = gimmie_data(game)
     test_frac = 0.2
@@ -145,13 +196,8 @@ def main():
     elo_scale = 400.0
     elo_k = 32.0
 
-    elo = Elo(
-        num_competitors=num_competitors,
-        loc=0.0,
-        scale=elo_scale,
-        k=elo_k
-    )
-    sweep_params = generate_hyperparam_grid({'scale' : (100,1000), 'k' : {1, 200}}, num_samples=2000)
+    elo = Elo(num_competitors=num_competitors)
+    sweep_params = generate_hyperparam_grid({'scale' : (100,800), 'k' : {16, 128}}, num_samples=100)
     locs, probs, best_idx = elo.sweep(matchups, outcomes, sweep_params)
 
     print('locs:', locs[best_idx].min(), locs[best_idx].max())
@@ -162,20 +208,41 @@ def main():
     clayto_scale = elo_scale / math.sqrt(2.0)
     clayto_lr = elo_k / (math.log(10.0) / elo_scale)
 
-    clayto = Clayto(
-        num_competitors=num_competitors,
-        loc=0.0,
-        scale=clayto_scale,
-        lr=clayto_lr,
-    )
-    scale_ranges = (100 / math.sqrt(2.0), 1000 / math.sqrt(2))
-    lr_ranges = (1 / (math.log(10.0) / 100), 200 / (math.log(10.0) / 1000))
-    print(scale_ranges)
-    print(lr_ranges)
+    clayto = Clayto(num_competitors=num_competitors)
+    scale_ranges = (100 / math.sqrt(2.0), 800 / math.sqrt(2))
+    lr_ranges = (16 / (math.log(10.0) / 100), 128 / (math.log(10.0) / 800))
     
-    sweep_params = generate_hyperparam_grid({'scale' : scale_ranges, 'lr' : lr_ranges}, num_samples=2000)
+    sweep_params = generate_hyperparam_grid(
+        {'scale' : scale_ranges, 'lr' : lr_ranges},
+        num_samples=100
+    )
     
     (locs, scales), probs, best_idx = clayto.sweep(matchups, outcomes, sweep_params)
+    print('locs:', locs[best_idx].min(), locs[best_idx].max())
+    print('scales:', scales[best_idx].min(), scales[best_idx].mean(), scales[best_idx].max())
+    print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
+    print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
+    print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
+
+    omnelo = Omnelo(num_competitors=num_competitors, cdf=jax.scipy.stats.logistic.cdf)
+
+    # scale_ranges = (0.259 / jnp.log(10), 0.26 / jnp.log(10))
+    # lr_ranges = (0.01, 0.0101)
+    # scale_ranges = (0.06, 0.12)
+    # lr_ranges = (0.0075, 0.0125)
+    scale_ranges = (0.01, 0.2)
+    loc_lr_ranges = (0.001, 0.02)
+    scale_lr_ranges = (1e-5, 1e-3)
+    print(f'scale ranges: {scale_ranges}')
+    print(f'loc_lr ranges: {loc_lr_ranges}')
+    print(f'scale_lr ranges: {scale_lr_ranges}')
+
+    sweep_params = generate_hyperparam_grid(
+        {'scale' : scale_ranges, 'loc_lr' : loc_lr_ranges, 'scale_lr': scale_lr_ranges},
+        num_samples=100
+    )
+    
+    (locs, scales), probs, best_idx = omnelo.sweep(matchups, outcomes, sweep_params)
     print('locs:', locs[best_idx].min(), locs[best_idx].max())
     print('scales:', scales[best_idx].min(), scales[best_idx].mean(), scales[best_idx].max())
     print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
