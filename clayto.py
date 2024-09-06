@@ -161,7 +161,13 @@ class Omnelo(RatingSystem):
             loss = outcome * jnp.log(prob) + (1.0 - outcome) * jnp.log(1.0 - prob)
             return loss, prob
         
+        def loss_only(locs, scales, outcome):
+            loss, _ = loss_and_prob(locs, scales, outcome)
+            return loss
+
         self.grad = jax.grad(loss_and_prob, argnums=(0,1), has_aux=True)
+        self.loc_hess = jax.hessian(loss_only)
+    
 
     def initialize(self, loc, scale, **kwargs):
         locs = jnp.full(self.num_competitors, loc)
@@ -175,8 +181,15 @@ class Omnelo(RatingSystem):
         c_locs = locs[competitors]
         c_scales = scales[competitors]
         grad, prob = self.grad(c_locs, c_scales, outcome)
-        new_locs = locs.at[competitors].add(loc_lr * grad[0])
-        new_scales = scales.at[competitors].add(scale_lr * grad[1])
+        loc_hess = self.loc_hess(c_locs, c_scales, outcome)
+        # jax.debug.print("loc hess: {}", loc_hess)
+
+        # hack because newton doesn't work rn
+        loc_hess = 1.0
+        scale_scale = 1.0
+
+        new_locs = locs.at[competitors].add(loc_lr * grad[0] / loc_hess)
+        new_scales = scales.at[competitors].add(scale_lr * grad[1] / scale_scale)
         return (new_locs, new_scales), prob
         
 def main():
@@ -224,22 +237,34 @@ def main():
     print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
     print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
 
-    omnelo = Omnelo(num_competitors=num_competitors, cdf=jax.scipy.stats.logistic.cdf)
+    omnelo = Omnelo(
+        num_competitors=num_competitors,
+        scale_lr=0.0,
+        cdf=jax.scipy.stats.logistic.cdf
+    )
 
     # scale_ranges = (0.259 / jnp.log(10), 0.26 / jnp.log(10))
     # lr_ranges = (0.01, 0.0101)
     # scale_ranges = (0.06, 0.12)
     # lr_ranges = (0.0075, 0.0125)
-    scale_ranges = (0.01, 0.2)
-    loc_lr_ranges = (0.001, 0.02)
+    scale_ranges = (0.01, 1.0)
+    loc_lr_ranges = (0.001, 2.0)
+    scale_lr_ranges = (1e-5, 1e-3)
+
+    scale_ranges = (200 / jnp.log(10.0), 500 / jnp.log(10.0))
+    loc_lr_ranges = (400, 6400)
     scale_lr_ranges = (1e-5, 1e-3)
     print(f'scale ranges: {scale_ranges}')
     print(f'loc_lr ranges: {loc_lr_ranges}')
-    print(f'scale_lr ranges: {scale_lr_ranges}')
+    # print(f'scale_lr ranges: {scale_lr_ranges}')
 
     sweep_params = generate_hyperparam_grid(
-        {'scale' : scale_ranges, 'loc_lr' : loc_lr_ranges, 'scale_lr': scale_lr_ranges},
-        num_samples=100
+        {
+            'scale' : scale_ranges,
+            'loc_lr' : loc_lr_ranges,
+            # 'scale_lr': scale_lr_ranges,
+        },
+        num_samples=200
     )
     
     (locs, scales), probs, best_idx = omnelo.sweep(matchups, outcomes, sweep_params)
