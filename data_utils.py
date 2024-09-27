@@ -4,7 +4,7 @@ import polars as pl
 from riix.utils.data_utils import MatchupDataset
 from datasets import load_dataset
 
-def gimmie_data(game):
+def load_dataset(game, rating_period='7D'):
     if os.path.exists(f'data/{game}.parquet'):
         df = pl.read_parquet(f'data/{game}.parquet').to_pandas()
     else:
@@ -16,6 +16,8 @@ def gimmie_data(game):
         df=df,
         competitor_cols=['competitor_1', 'competitor_2'],
         outcome_col='outcome',
-        datetime_col='date'
+        datetime_col='date',
+        rating_period=rating_period,
     )
-    return jnp.asarray(dataset.matchups), jnp.asarray(dataset.outcomes), dataset.num_competitors
+    return dataset
+
