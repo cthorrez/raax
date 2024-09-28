@@ -64,6 +64,7 @@ def run_riix_elo(dataset, mode):
     elo.fit_dataset(dataset)
     return elo.ratings
 
+# TODO: try competitor wise update masking to avoid the C cost sum
 @jax.jit
 def do_update(ratings, running_grads):
     return ratings + running_grads, running_grads.at[:].set(0)
@@ -141,46 +142,10 @@ def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors):
     new_ratings = final_val['ratings'] + final_val['running_grads']
     return new_ratings
 
-# def run_vmap_raax_elo(matchups, outcomes, start_idxs, end_idxs, num_competitors):
-#     ratings = jnp.zeros(num_competitors, dtype=jnp.float32)
-#     for start_idx, end_idx in zip(start_idxs, end_idxs):
-#         print(start_idx, end_idx)
-#         period_matchups = matchups[start_idx:end_idx,:]
-#         period_outcomes = outcomes[start_idx:end_idx]
-#         period_ratings = ratings[period_matchups]
-#         probs = jax.nn.sigmoid(period_ratings[:,0] - period_ratings[:,1])
-#         updates = period_outcomes - probs
-#         ratings = ratings.at[period_matchups[:,0]].add(updates)
-#         ratings = ratings.at[period_matchups[:,1]].add(-updates)
-#     return ratings
-
-with jax.disable_jit():
-    def update_ratings(ratings, matchups, outcomes):
-        player1_ratings = ratings[matchups[:,0]]
-        player2_ratings = ratings[matchups[:,1]]
-        rating_diff = player1_ratings - player2_ratings
-        probs = jax.nn.sigmoid(rating_diff)
-        updates = outcomes - probs
-        
-        # Prepare indices and updates for scatter_add
-        indices = jnp.concatenate([matchups[:,0], matchups[:,1]])
-        all_updates = jnp.concatenate([updates, -updates])
-        
-        # Use scatter_add to apply all updates at once
-        return ratings.at[indices].add(all_updates)
-
-
-    def run_vmap_raax_elo(matchups, outcomes, start_idxs, end_idxs, num_competitors):
-        ratings = jnp.zeros(num_competitors, dtype=jnp.float32)
-        for start_idx, end_idx in zip(start_idxs, end_idxs):
-            period_matchups = matchups[start_idx:end_idx,:]
-            period_outcomes = outcomes[start_idx:end_idx]
-            ratings = update_ratings(ratings, period_matchups, period_outcomes)
-        return ratings
 
 def jax_preprocess(dataset):
     time_steps = jnp.array(dataset.time_steps)
-    unique_times, counts = jnp.unique_counts(time_steps)
+    _, counts = jnp.unique_counts(time_steps)
     end_idxs = jnp.cumsum(counts)
     start_idxs = jnp.concatenate([jnp.array([0]), end_idxs[:-1]])
 
@@ -191,8 +156,8 @@ def jax_preprocess(dataset):
 
 
 if __name__ == '__main__':
-    # dataset = load_dataset("league_of_legends", '1D')
-    dataset = load_dataset("tetris", '1D')
+    # dataset = load_dataset("league_of_legends", '28D')
+    dataset = load_dataset("smash_melee", '1D')
 
     matchups, outcomes, update_mask, start_idxs, end_idxs = jax_preprocess(dataset)
 
@@ -204,9 +169,10 @@ if __name__ == '__main__':
         batched_riix_ratings = run_riix_elo(dataset, 'batched')
     with timer('batched raax'):
         batched_raax_ratings = run_batched_raax_elo(matchups, outcomes, update_mask, dataset.num_competitors)
-    with timer('vmap raax'):
-        with jax.disable_jit():
-            vmap_raax_ratings = run_vmap_raax_elo(matchups, outcomes, start_idxs, end_idxs, dataset.num_competitors)
+    with timer('batched riix'):
+        batched_riix_ratings = run_riix_elo(dataset, 'batched')
+    with timer('batched raax'):
+        batched_raax_ratings = run_batched_raax_elo(matchups, outcomes, update_mask, dataset.num_competitors)
 
     print('online diffs:')
     print(np.min(np.abs(online_riix_ratings - online_raax_ratings)))
@@ -217,6 +183,6 @@ if __name__ == '__main__':
     print(np.max(np.abs(batched_riix_ratings - batched_raax_ratings)))
     print(np.mean(np.abs(batched_riix_ratings - batched_raax_ratings)))
     print('vmap diffs:')
-    print(np.min(np.abs(batched_riix_ratings - vmap_raax_ratings)))
-    print(np.max(np.abs(batched_riix_ratings - vmap_raax_ratings)))
-    print(np.mean(np.abs(batched_riix_ratings - vmap_raax_ratings)))
+    # print(np.min(np.abs(batched_riix_ratings - vmap_raax_ratings)))
+    # print(np.max(np.abs(batched_riix_ratings - vmap_raax_ratings)))
+    # print(np.mean(np.abs(batched_riix_ratings - vmap_raax_ratings)))
