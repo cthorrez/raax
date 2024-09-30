@@ -64,7 +64,10 @@ def run_riix_elo(dataset, mode):
     elo.fit_dataset(dataset)
     return elo.ratings
 
-# TODO: try competitor wise update masking to avoid the C cost sum
+# Next ideas:
+# 1. try to find max competitors active in a period and use a vec of indices of that size
+# 2. do masking on batches of max size in time dimension and use standard vmap
+# 3. try GPU
 @jax.jit
 def do_update(ratings, running_grads, active_mask):
     def update_single(rating, grad, is_active):
@@ -153,6 +156,8 @@ def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors):
         f=batched_elo_update,
         init=init_val,
         xs=xs,
+        length=matchups.shape[0],
+        unroll=20,
     )
     new_ratings = final_val['ratings'] + final_val['running_grads']
     return new_ratings
@@ -172,7 +177,7 @@ def jax_preprocess(dataset):
 
 if __name__ == '__main__':
     # dataset = load_dataset("league_of_legends", '28D')
-    dataset = load_dataset("smash_melee", '7D')
+    dataset = load_dataset("smash_melee", '1D')
 
     matchups, outcomes, update_mask, start_idxs, end_idxs = jax_preprocess(dataset)
 
