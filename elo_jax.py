@@ -69,35 +69,26 @@ def run_riix_elo(dataset, mode):
 # 2. do masking on batches of max size in time dimension and use standard vmap
 # 3. try GPU
 @jax.jit
-def do_update(ratings, running_grads, active_mask):
-    def update_single(rating, grad, is_active):
-        return jnp.where(is_active, rating + grad, rating)
-
-    new_ratings = jax.vmap(update_single)(ratings, running_grads, active_mask)
-    new_running_grads = jnp.zeros_like(running_grads)
-    new_active_mask = jnp.zeros_like(active_mask)
-
-    return new_ratings, new_running_grads, new_active_mask
+def do_update(ratings, running_grads):
+    return running_grads, running_grads
 
 @jax.jit
-def do_nothing(ratings, running_grads, active_mask):
-    return ratings, running_grads, active_mask
+def do_nothing(ratings, running_grads):
+    return ratings, running_grads
 
 def batched_elo_update(carry, x):
     ratings = carry['ratings']
     running_grads = carry['running_grads']
-    active_mask = carry['active_mask']
     comp_idxs = x['matchups']
     update_flag = x['update_mask']
     outcome = x['outcomes']
 
-    ratings, running_grads, active_mask = jax.lax.cond(
+    ratings, running_grads = jax.lax.cond(
         update_flag,
         do_update,
         do_nothing,
         ratings,
         running_grads,
-        active_mask,
     )
 
     # ratings = ratings + (update_flag * running_grads)
@@ -109,14 +100,10 @@ def batched_elo_update(carry, x):
     grad = elo_grad_hard(comp_ratings, outcome)
     new_running_grads = running_grads.at[comp_idxs[0]].add(grad)
     new_running_grads = new_running_grads.at[comp_idxs[1]].add(-grad)
-    active_mask = active_mask.at[comp_idxs[0]].set(True)
-    active_mask = active_mask.at[comp_idxs[1]].set(True)
-
 
     new_carry = {
         'ratings': ratings,
         'running_grads': new_running_grads,
-        'active_mask': active_mask,
     }
     return new_carry, None
 
@@ -141,7 +128,6 @@ def run_online_raax_elo(matchups, outcomes, num_competitors):
 def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors):
     ratings = jnp.zeros(num_competitors, dtype=jnp.float32)
     running_grads = jnp.zeros(num_competitors, dtype=jnp.float32)
-    active_mask = jnp.zeros(num_competitors, dtype=jnp.bool)
     xs = {
         'matchups': matchups,
         'outcomes': outcomes,
@@ -150,7 +136,6 @@ def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors):
     init_val = {
         'ratings': ratings,
         'running_grads': running_grads,
-        'active_mask': active_mask,
     }
     final_val, _ = jax.lax.scan(
         f=batched_elo_update,
