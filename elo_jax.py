@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from data_utils import load_dataset
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
+from riix.models.glicko import Glicko
 
 jax.default_device = jax.devices("cpu")[0]
 
@@ -66,6 +67,14 @@ def run_riix_elo(dataset, mode):
     )
     elo.fit_dataset(dataset)
     return elo.ratings
+
+def run_riix_glicko(dataset, mode):
+    glicko = Glicko(
+        competitors=dataset.competitors,
+        update_method=mode,
+    )
+    glicko.fit_dataset(dataset)
+    return glicko.ratings
 
 @jax.jit
 def do_update(stale_ratings, fresh_ratings):
@@ -155,17 +164,22 @@ def jax_preprocess(dataset):
 
 
 if __name__ == '__main__':
-    dataset = load_dataset("league_of_legends", '7D')
+    # dataset = load_dataset("league_of_legends", '1D')
     # dataset = load_dataset("starcraft2", '1D')
-    # dataset = load_dataset("smash_melee", '1D')
+    dataset = load_dataset("smash_melee", '1D')
 
 
     matchups, outcomes, update_mask, start_idxs, end_idxs = jax_preprocess(dataset)
 
-    with timer('iterative riix'):
+    with timer('online riix'):
         online_riix_ratings = run_riix_elo(dataset, 'iterative')
     with timer('online raax'):
         online_raax_ratings = run_online_raax_elo(matchups, outcomes, dataset.num_competitors)
+    with timer('online riix'):
+        online_riix_ratings = run_riix_elo(dataset, 'iterative')
+    with timer('online raax'):
+        online_raax_ratings = run_online_raax_elo(matchups, outcomes, dataset.num_competitors)
+    print('----------------------------')
     with timer('batched riix'):
         batched_riix_ratings = run_riix_elo(dataset, 'batched')
     with timer('batched raax'):
@@ -184,5 +198,7 @@ if __name__ == '__main__':
     print(np.max(np.abs(batched_riix_ratings - batched_raax_ratings)))
     print(np.mean(np.abs(batched_riix_ratings - batched_raax_ratings)))
 
-    print(online_riix_ratings)
-    print(online_raax_ratings)
+    with timer('online glicko'):
+        run_riix_glicko(dataset, 'iterative')
+    with timer('batched glicko'):
+        run_riix_glicko(dataset, 'batched')
