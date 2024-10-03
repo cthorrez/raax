@@ -1,24 +1,17 @@
 import math
-import time
 from functools import partial
 import numpy as np
-from contextlib import contextmanager
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from data_utils import load_dataset
+from utils import timer
+from data_utils import load_dataset, jax_preprocess
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
 from riix.models.glicko import Glicko
 
 jax.default_device = jax.devices("cpu")[0]
 
-@contextmanager
-def timer(task_name=""):
-    start_time = time.time()
-    yield
-    end_time = time.time()
-    print(f"{task_name} duration (s): {end_time - start_time:.4f}")
 
 def sigmoid(x):
     return 1.0 / (1.0 + jnp.exp(-x))
@@ -151,16 +144,6 @@ def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors, alpha
     )
     return final_val['fresh_ratings']
 
-
-def jax_preprocess(dataset):
-    time_steps = jnp.array(dataset.time_steps)
-    _, counts = jnp.unique_counts(time_steps)
-    end_idxs = jnp.cumsum(counts)
-    start_idxs = jnp.concatenate([jnp.array([0]), end_idxs[:-1]])
-    update_mask = jnp.insert(jnp.diff(time_steps) != 0, 0, False)
-    matchups = jnp.array(dataset.matchups)
-    outcomes = jnp.array(dataset.outcomes)
-    return matchups, outcomes, update_mask, start_idxs, end_idxs
 
 
 if __name__ == '__main__':

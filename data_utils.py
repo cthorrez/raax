@@ -21,3 +21,13 @@ def load_dataset(game, rating_period='7D'):
     )
     return dataset
 
+def jax_preprocess(dataset):
+    time_steps = jnp.array(dataset.time_steps)
+    _, counts = jnp.unique_counts(time_steps)
+    end_idxs = jnp.cumsum(counts)
+    start_idxs = jnp.concatenate([jnp.array([0]), end_idxs[:-1]])
+    update_mask = jnp.insert(jnp.diff(time_steps) != 0, 0, False)
+    matchups = jnp.array(dataset.matchups)
+    outcomes = jnp.array(dataset.outcomes)
+    return matchups, outcomes, update_mask, start_idxs, end_idxs
+
