@@ -18,11 +18,14 @@ SIGN_FLIP = jnp.array([1.0, -1.0])
 def online_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     mus = prev_val['mus']
     rds = prev_val['rds']
+
     comp_idxs = prev_val['matchups'][idx]
     outcome = prev_val['outcomes'][idx]
 
     cur_mus = mus[comp_idxs]
     cur_rds = rds[comp_idxs]
+
+    cur_rds = jnp.minimum(max_rd, jnp.sqrt(jnp.square(cur_rds) + c2))
 
     cur_rds_squared = jnp.square(cur_rds)
     cur_gs = g(cur_rds_squared, three_q2_over_pi2)
