@@ -25,17 +25,19 @@ def online_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     cur_mus = mus[comp_idxs]
     # jax.debug.print("{cur_mus}", cur_mus=cur_mus)
     cur_rds = rds[comp_idxs]
-    jax.debug.print("before: {cur_rds}", cur_rds=cur_rds)
+
     cur_rds = jnp.minimum(max_rd, jnp.sqrt(jnp.square(cur_rds) + c2))
-    jax.debug.print("after: {cur_rds}", cur_rds=cur_rds)
 
     cur_rds_squared = jnp.square(cur_rds)
     cur_gs = g(cur_rds_squared, three_q2_over_pi2)
+    # jax.debug.print("cur_gs: {cur_gs}", cur_gs=cur_gs)
 
     mu_diffs = (cur_mus * SIGN_FLIP).sum() * SIGN_FLIP
     # jax.debug.print("{mu_diffs}", mu_diffs=mu_diffs)
     probs = jax.nn.sigmoid(q * jnp.flip(cur_gs) * mu_diffs)
-    d2_inv = q2 * jnp.square(jnp.flip(cur_rds)) * probs * (1.0 - probs)
+    # jax.debug.print("probs: {probs}", probs=probs)
+    d2_inv = q2 * jnp.square(jnp.flip(cur_gs)) * probs * (1.0 - probs)
+    # jax.debug.print("d2_inv: {d2_inv}", d2_inv=d2_inv)
 
     both_outcomes = jnp.array([outcome, 1.0 - outcome])
     mu_update_num = q * jnp.flip(cur_gs) * (both_outcomes - probs)
@@ -90,8 +92,8 @@ def run_online_glicko(
     num_competitors,
     initial_mu=1500.0,
     initial_rd=350.0,
-    c=0.0,
-    # c=63.2,
+    # c=0.0,
+    c=63.2,
     # c=200.0,
     q=math.log(10.0)/400.0,
 ):
@@ -99,6 +101,9 @@ def run_online_glicko(
     three_q2_over_pi2 = (3.0 * q**2.0) / (math.pi ** 2.0)
     mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu, dtype=jnp.float64)
     rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd, dtype=jnp.float64)
+
+    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
+    # rds = jnp.array([100.0, 30.0, 100.0, 300.0])
 
     init_val = {
         'matchups': matchups,
@@ -179,25 +184,39 @@ def main():
 
     matchups, outcomes, update_mask, start_idxs, end_idxs = jax_preprocess(dataset)
 
-    with timer('raax online glicko'):
-        mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
-    with timer('raax online glicko'):
-        mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
+    # with timer('raax online glicko'):
+    #     mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
+    # with timer('raax online glicko'):
+    #     mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
     with timer('raax online glicko'):
         mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
 
-    sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
+    with timer('raax batched glicko'):
+        mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
+
+    sort_idxs = jnp.argsort(-(mus - (3.0 * rds)))
     for idx in sort_idxs[:10]:
         print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
 
-    with timer('riix online glicko'):
-        riix_mus, riix_rds = riix_online_glicko(dataset)
-    print('riix:')
-    print(riix_mus)
-    print(riix_rds)
-    print('raax')
-    print(mus)
-    print(rds)
+    # with timer('riix online glicko'):
+    #     riix_mus, riix_rds = riix_online_glicko(dataset)
+    # print('riix:')
+    # print(riix_mus)
+    # print(riix_rds)
+    # print('raax')
+
+    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0], dtype=jnp.float64)
+    # rds = jnp.array([100.0, 30.0, 100.0, 300.0], dtype=jnp.float64)
+    # matchups = jnp.array(
+    #     [[0,1],
+    #      [0,2],
+    #      [0,3]]
+    # )
+    # outcomes = jnp.array([1.0, 0.0, 0.0])
+    # mus, rds = run_online_glicko(matchups, outcomes, num_competitors=4)
+
+    # print(mus)
+    # print(rds)
 
 if __name__ == '__main__':
     main()
