@@ -152,7 +152,7 @@ if __name__ == '__main__':
     dataset = load_dataset("smash_melee", '1D')
 
 
-    matchups, outcomes, update_mask, start_idxs, end_idxs = jax_preprocess(dataset)
+    matchups, outcomes, time_steps, update_mask = jax_preprocess(dataset)
 
     with timer('online riix'):
         online_riix_ratings = run_riix_elo(dataset, 'iterative')
