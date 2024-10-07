@@ -23,31 +23,23 @@ def online_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     outcome = prev_val['outcomes'][idx]
 
     cur_mus = mus[comp_idxs]
-    # jax.debug.print("{cur_mus}", cur_mus=cur_mus)
     cur_rds = rds[comp_idxs]
 
     cur_rds = jnp.minimum(max_rd, jnp.sqrt(jnp.square(cur_rds) + c2))
 
     cur_rds_squared = jnp.square(cur_rds)
     cur_gs = g(cur_rds_squared, three_q2_over_pi2)
-    # jax.debug.print("cur_gs: {cur_gs}", cur_gs=cur_gs)
 
     mu_diffs = (cur_mus * SIGN_FLIP).sum() * SIGN_FLIP
-    # jax.debug.print("{mu_diffs}", mu_diffs=mu_diffs)
     probs = jax.nn.sigmoid(q * jnp.flip(cur_gs) * mu_diffs)
-    # jax.debug.print("probs: {probs}", probs=probs)
     d2_inv = q2 * jnp.square(jnp.flip(cur_gs)) * probs * (1.0 - probs)
-    # jax.debug.print("d2_inv: {d2_inv}", d2_inv=d2_inv)
 
     both_outcomes = jnp.array([outcome, 1.0 - outcome])
     mu_update_num = q * jnp.flip(cur_gs) * (both_outcomes - probs)
     mu_update_denom = (1.0 / jnp.square(cur_rds)) + d2_inv
     mu_updates = mu_update_num / mu_update_denom
-    # jax.debug.print("{mu_updates}", mu_updates=mu_updates)
-
     new_rds = jnp.sqrt(1.0 / mu_update_denom)
  
-
     mus = mus.at[comp_idxs].add(mu_updates)
     rds = rds.at[comp_idxs].set(new_rds)
 
@@ -59,30 +51,71 @@ def online_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     }
     return new_val
 
-@partial(jax.jit, static_argnums=(2,3,4))
-def batched_glicko_update(idx, prev_val, max_rd, c2, three_q2_over_pi2):
+
+@jax.jit
+def do_update(mus, rds, sum_1, sum_2, q, q2):
+    mu_update_num = q * sum_1
+    d2_inv = q2 * sum_2
+    mu_update_denom = (1.0 / jnp.square(rds)) + d2_inv
+    mu_updates = mu_update_num / mu_update_denom
+    mus = mus + mu_updates
+    rds = jnp.sqrt(1.0 / mu_update_denom)
+    return mus, rds, jnp.zeros_like(sum_1), jnp.zeros_like(sum_2)
+    
+
+@jax.jit
+def do_nothing(mus, rds, sum_1, sum_2, q, q2):
+    return mus, rds, sum_1, sum_2
+
+
+@partial(jax.jit, static_argnums=(2,3,4,5,6))
+def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     mus = prev_val['mus']
     rds = prev_val['rds']
-    error = prev_val['error']
-    d2_inv = prev_val['d2_inv']
+    sum_1 = prev_val['sum_1']
+    sum_2 = prev_val['sum_2']
     comp_idxs = prev_val['matchups'][idx]
     outcome = prev_val['outcomes'][idx]
+    update_flag = prev_val['update_mask'][idx]
+
+    mus, rds, sum_1, sum_2 = jax.lax.cond(
+        update_flag,
+        do_update,
+        do_nothing,
+        mus,
+        rds,
+        sum_1,
+        sum_2,
+        q,
+        q2,
+    )
 
     cur_mus = mus[comp_idxs]
     cur_rds = rds[comp_idxs]
 
+    cur_rds = jnp.minimum(max_rd, jnp.sqrt(jnp.square(cur_rds) + c2))
+
     cur_rds_squared = jnp.square(cur_rds)
     cur_gs = g(cur_rds_squared, three_q2_over_pi2)
 
-    mu_diff = (cur_mus * SIGN_FLIP).sum() * SIGN_FLIP
+    mu_diffs = (cur_mus * SIGN_FLIP).sum() * SIGN_FLIP
+    probs = jax.nn.sigmoid(q * jnp.flip(cur_gs) * mu_diffs)
+    
+    both_outcomes = jnp.array([outcome, 1.0 - outcome])
+    val_1 = jnp.flip(cur_gs) * (both_outcomes - probs)
+    sum_1 = sum_1.at[comp_idxs].add(val_1)
+
+    val_2 = jnp.square(jnp.flip(cur_gs)) * probs * (1.0 - probs)
+    sum_2 = sum_2.at[comp_idxs].add(val_2)
 
     new_val = {
         'matchups': prev_val['matchups'],
         'outcomes': prev_val['outcomes'],
+        'update_mask': prev_val['update_mask'],
         'mus': mus,
         'rds': rds,
-        'error': error,
-        'd2_inv': d2_inv,
+        'sum_1': sum_1,
+        'sum_2': sum_2,
     }
     return new_val
 
@@ -132,6 +165,7 @@ def run_online_glicko(
 def run_batched_glicko(
     matchups,
     outcomes,
+    update_mask,
     num_competitors,
     initial_mu=1500.0,
     initial_rd=350.0,
@@ -142,16 +176,17 @@ def run_batched_glicko(
     three_q2_over_pi2 = (3.0 * q**2.0) / (math.pi ** 2.0)
     mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu, dtype=jnp.float64)
     rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd, dtype=jnp.float64)
-    error = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
-    d2_inv = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
+    sum_1 = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
+    sum_2 = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
 
     init_val = {
         'matchups': matchups,
         'outcomes': outcomes,
+        'update_mask': update_mask,
         'mus': mus,
         'rds': rds,
-        'error': error,
-        'd2_inv': d2_inv,
+        'sum_1': sum_1,
+        'sum_2': sum_2,
     }
     lower = 0
     upper = matchups.shape[0]
@@ -162,12 +197,13 @@ def run_batched_glicko(
             batched_glicko_update,
             max_rd=initial_rd,
             c2=c2,
+            q=q,
+            q2=q**2.0,
             three_q2_over_pi2=three_q2_over_pi2
         ),
         init_val=init_val,
     )
-    new_ratings = final_val['mus']
-    return new_ratings
+    return final_val['mus'], final_val['rds']
 
 def riix_online_glicko(dataset):
     model = Glicko(
@@ -180,7 +216,7 @@ def riix_online_glicko(dataset):
 
 def main():
     # dataset = load_dataset("smash_melee", '1D')
-    dataset = load_dataset("league_of_legends", '1D')
+    dataset = load_dataset("league_of_legends", '7D')
 
     matchups, outcomes, update_mask, start_idxs, end_idxs = jax_preprocess(dataset)
 
