@@ -4,7 +4,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from utils import timer
-from data_utils import load_dataset, jax_preprocess
+from data_utils import get_dataset, jax_preprocess
 
 from riix.models.glicko import Glicko
 
@@ -215,8 +215,8 @@ def riix_online_glicko(dataset):
     return model.ratings, model.rating_devs
 
 def main():
-    dataset = load_dataset("smash_melee", '7D')
-    # dataset = load_dataset("league_of_legends", '7D')
+    dataset = get_dataset("smash_melee", '7D')
+    # dataset = get_dataset("league_of_legends", '7D')
 
     matchups, outcomes, time_steps, update_mask = jax_preprocess(dataset)
 
@@ -229,12 +229,30 @@ def main():
 
     with timer('raax batched glicko'):
         mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
+        print('mus')
+        print(mus)
+        print('rds')
+        print(rds)
     with timer('raax batched glicko'):
         mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
+        print('mus')
+        print(mus)
+        print('rds')
+        print(rds)
     with timer('raax batched glicko'):
         mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
+        print('mus')
+        print(mus)
+        print('rds')
+        print(rds)
+    
+    print('ayy')
 
     sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
+    print('lmao')
+    print(mus)
+    print(rds)
+    print('?????')
     for idx in sort_idxs[:10]:
         print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
 

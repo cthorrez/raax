@@ -4,7 +4,7 @@ import polars as pl
 from riix.utils.data_utils import MatchupDataset
 from datasets import load_dataset
 
-def load_dataset(game, rating_period='7D'):
+def get_dataset(game, rating_period='7D'):
     if os.path.exists(f'data/{game}.parquet'):
         df = pl.read_parquet(f'data/{game}.parquet').to_pandas()
     else:

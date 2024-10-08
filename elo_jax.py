@@ -5,7 +5,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from utils import timer
-from data_utils import load_dataset, jax_preprocess
+from data_utils import get_dataset, jax_preprocess
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
 from riix.models.glicko import Glicko
@@ -147,9 +147,9 @@ def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors, alpha
 
 
 if __name__ == '__main__':
-    # dataset = load_dataset("league_of_legends", '1D')
-    # dataset = load_dataset("starcraft2", '1D')
-    dataset = load_dataset("smash_melee", '1D')
+    # dataset = get_dataset("league_of_legends", '1D')
+    # dataset = get_dataset("starcraft2", '1D')
+    dataset = get_dataset("smash_melee", '1D')
 
 
     matchups, outcomes, time_steps, update_mask = jax_preprocess(dataset)
