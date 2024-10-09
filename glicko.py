@@ -51,19 +51,34 @@ def online_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
 
 
 @jax.jit
-def do_update(mus, rds, sum_1, sum_2, q, q2):
-    mu_update_num = q * sum_1
-    d2_inv = q2 * sum_2
-    mu_update_denom = (1.0 / jnp.square(rds)) + d2_inv
-    mu_updates = mu_update_num / mu_update_denom
-    mus = mus + mu_updates
-    rds = jnp.sqrt(1.0 / mu_update_denom)
-    return mus, rds, jnp.zeros_like(sum_1), jnp.zeros_like(sum_2)
+def single_update(mu, rd, sum_1, sum_2):
+    mu_update_denom = (1.0 / rd ** 2.0) + sum_2
+    mu = mu + sum_1 / mu_update_denom
+    rd = jnp.sqrt(1.0 / mu_update_denom)
+    return jnp.array([mu, rd])
+
+@jax.jit
+def do_update(mus, rds, sum_1, sum_2, mask):
+    mus_rds = jnp.where(
+        mask[:,None],
+        jax.vmap(single_update)(mus, rds, sum_1, sum_2),
+        jnp.vstack([mus, rds]).transpose()
+    )
+    mus, rds = jnp.split(mus_rds, 2, axis=1)
+    mus = mus.squeeze()
+    rds = rds.squeeze()
+
+    # mu_update_denom = (1.0 / jnp.square(rds)) + sum_2
+    # mu_updates = sum_1 / mu_update_denom
+    # mus = mus + mask * mu_updates
+    # rds = jnp.sqrt(1.0 / mu_update_denom)
+    return mus, rds, jnp.zeros_like(sum_1), jnp.zeros_like(sum_2), jnp.zeros_like(mask)
+
     
 
 @jax.jit
-def do_nothing(mus, rds, sum_1, sum_2, q, q2):
-    return mus, rds, sum_1, sum_2
+def do_nothing(*args):
+    return args
 
 
 @partial(jax.jit, static_argnums=(2,3,4,5,6))
@@ -72,11 +87,12 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     rds = prev_val['rds']
     sum_1 = prev_val['sum_1']
     sum_2 = prev_val['sum_2']
+    mask = prev_val['mask']
     comp_idxs = prev_val['matchups'][idx]
     outcome = prev_val['outcomes'][idx]
     update_flag = prev_val['update_mask'][idx]
 
-    mus, rds, sum_1, sum_2 = jax.lax.cond(
+    mus, rds, sum_1, sum_2, mask = jax.lax.cond(
         update_flag,
         do_update,
         do_nothing,
@@ -84,8 +100,7 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
         rds,
         sum_1,
         sum_2,
-        q,
-        q2,
+        mask,
     )
 
     cur_mus = mus[comp_idxs]
@@ -100,11 +115,13 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     probs = jax.nn.sigmoid(q * jnp.flip(cur_gs) * mu_diffs)
     
     both_outcomes = jnp.array([outcome, 1.0 - outcome])
-    val_1 = jnp.flip(cur_gs) * (both_outcomes - probs)
+    val_1 = q * jnp.flip(cur_gs) * (both_outcomes - probs)
     sum_1 = sum_1.at[comp_idxs].add(val_1)
 
-    val_2 = jnp.square(jnp.flip(cur_gs)) * probs * (1.0 - probs)
+    val_2 = q2 * jnp.square(jnp.flip(cur_gs)) * probs * (1.0 - probs)
     sum_2 = sum_2.at[comp_idxs].add(val_2)
+
+    mask = mask.at[comp_idxs].set(True)
 
     new_val = {
         'matchups': prev_val['matchups'],
@@ -114,6 +131,7 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
         'rds': rds,
         'sum_1': sum_1,
         'sum_2': sum_2,
+        'mask': mask,
     }
     return new_val
 
@@ -175,6 +193,7 @@ def run_batched_glicko(
     rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd, dtype=jnp.float64)
     sum_1 = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
     sum_2 = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
+    mask = jnp.zeros(shape=(num_competitors,), dtype=jnp.bool_)
 
     # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
     # rds = jnp.array([200.0, 30.0, 100.0, 300.0])
@@ -187,6 +206,7 @@ def run_batched_glicko(
         'rds': rds,
         'sum_1': sum_1,
         'sum_2': sum_2,
+        'mask': mask,
     }
     lower = 0
     upper = matchups.shape[0]
@@ -229,22 +249,22 @@ def main():
 
     with timer('raax batched glicko'):
         mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
-        print('mus')
-        print(mus)
-        print('rds')
-        print(rds)
+        # print('mus')
+        # print(mus)
+        # print('rds')
+        # print(rds)
     with timer('raax batched glicko'):
         mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
-        print('mus')
-        print(mus)
-        print('rds')
-        print(rds)
+        # print('mus')
+        # print(mus)
+        # print('rds')
+        # print(rds)
     with timer('raax batched glicko'):
         mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=dataset.num_competitors)
-        print('mus')
-        print(mus)
-        print('rds')
-        print(rds)
+        # print('mus')
+        # print(mus)
+        # print('rds')
+        # print(rds)
     
     print('ayy')
 
