@@ -1,7 +1,10 @@
+import os
+# os.environ['JAX_DEFAULT_DTYPE_BITS'] = '64'
+os.environ['JAX_DEFAULT_DTYPE_BITS'] = '32'
+import jax
+# jax.config.update("jax_enable_x64", True)
 import math
 from functools import partial
-import jax
-jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from utils import timer
 from data_utils import get_dataset, jax_preprocess
@@ -59,19 +62,19 @@ def single_update(mu, rd, sum_1, sum_2):
 
 @jax.jit
 def do_update(mus, rds, sum_1, sum_2, mask):
-    mus_rds = jnp.where(
-        mask[:,None],
-        jax.vmap(single_update)(mus, rds, sum_1, sum_2),
-        jnp.vstack([mus, rds]).transpose()
-    )
-    mus, rds = jnp.split(mus_rds, 2, axis=1)
-    mus = mus.squeeze()
-    rds = rds.squeeze()
+    # mus_rds = jnp.where(
+    #     mask[:,None],
+    #     jax.vmap(single_update)(mus, rds, sum_1, sum_2),
+    #     jnp.vstack([mus, rds]).transpose()
+    # )
+    # mus, rds = jnp.split(mus_rds, 2, axis=1)
+    # mus = mus.squeeze()
+    # rds = rds.squeeze()
 
-    # mu_update_denom = (1.0 / jnp.square(rds)) + sum_2
-    # mu_updates = sum_1 / mu_update_denom
-    # mus = mus + mask * mu_updates
-    # rds = jnp.sqrt(1.0 / mu_update_denom)
+    mu_update_denom = (1.0 / jnp.square(rds)) + sum_2
+    mu_updates = sum_1 / mu_update_denom
+    mus = mus + mask * mu_updates
+    rds = jnp.sqrt(1.0 / mu_update_denom)
     return mus, rds, jnp.zeros_like(sum_1), jnp.zeros_like(sum_2), jnp.zeros_like(mask)
 
     
@@ -147,8 +150,8 @@ def run_online_glicko(
 ):
     c2 = c ** 2.0
     three_q2_over_pi2 = (3.0 * q**2.0) / (math.pi ** 2.0)
-    mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu, dtype=jnp.float64)
-    rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd, dtype=jnp.float64)
+    mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu)
+    rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd)
 
     # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
     # rds = jnp.array([100.0, 30.0, 100.0, 300.0])
@@ -189,10 +192,10 @@ def run_batched_glicko(
 ):
     c2 = c ** 2.0
     three_q2_over_pi2 = (3.0 * q**2.0) / (math.pi ** 2.0)
-    mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu, dtype=jnp.float64)
-    rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd, dtype=jnp.float64)
-    sum_1 = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
-    sum_2 = jnp.zeros(shape=(num_competitors,), dtype=jnp.float64)
+    mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu)
+    rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd)
+    sum_1 = jnp.zeros(shape=(num_competitors,))
+    sum_2 = jnp.zeros(shape=(num_competitors,))
     mask = jnp.zeros(shape=(num_competitors,), dtype=jnp.bool_)
 
     # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
@@ -283,8 +286,8 @@ def main():
     # print(riix_rds)
     # print('raax')
 
-    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0], dtype=jnp.float64)
-    # rds = jnp.array([100.0, 30.0, 100.0, 300.0], dtype=jnp.float64)
+    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
+    # rds = jnp.array([100.0, 30.0, 100.0, 300.0])
     # matchups = jnp.array(
     #     [[0,1],
     #      [0,2],
