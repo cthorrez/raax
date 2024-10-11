@@ -63,7 +63,7 @@ def single_update(mu, rd, sum_1, sum_2):
     return mu, rd
 
 @jax.jit
-def do_update(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep, max_competitors_per_time_step, idxs):
+def do_update(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_time_step):
     active_mus = mus[idx_map_back]
     active_rds = rds[idx_map_back]
     new_mus, new_rds = single_update(active_mus, active_rds, sum_1[:-1], sum_2[:-1])
@@ -82,8 +82,8 @@ def do_update(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_see
 
 
 @jax.jit
-def do_nothing(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep, max_competitors_per_time_step, idxs):
-    return mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep    
+def do_nothing(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_time_step):
+    return mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_time_step
 
 @jax.jit
 def seen_fn(comp_idx, idx_map, idx_map_back, num_competitors_seen_this_timestep):
@@ -100,7 +100,7 @@ def not_seen_fn(comp_idx, idx_map, idx_map_back, num_competitors_seen_this_times
 
 
 @partial(jax.jit, static_argnums=(2,3,4,5,6))
-def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2, max_competitors_per_timestep, idxs):
+def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     mus = prev_val['mus']
     rds = prev_val['rds']
     sum_1 = prev_val['sum_1']
@@ -123,8 +123,6 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2, m
         idx_map,
         idx_map_back,
         num_competitors_seen_this_timestep,
-        max_competitors_per_timestep,
-        idxs,
     )
 
     idx_1 = comp_idxs[0]
@@ -276,8 +274,6 @@ def run_batched_glicko(
             q=q,
             q2=q**2.0,
             three_q2_over_pi2=three_q2_over_pi2,
-            max_competitors_per_timestep=max_competitors_per_timestep,
-            idxs=idxs,
         ),
         init_val=init_val,
     )
