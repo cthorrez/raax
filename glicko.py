@@ -5,7 +5,7 @@ import math
 from functools import partial
 import jax.numpy as jnp
 from utils import timer
-from data_utils import get_dataset, jax_preprocess
+from data_utils import get_dataset, jax_preprocess, get_synthetic_dataset
 
 from riix.models.glicko import Glicko
 
@@ -63,30 +63,28 @@ def single_update(mu, rd, sum_1, sum_2):
     rd = jnp.sqrt(1.0 / mu_update_denom)
     return mu, rd
 
-# @jax.jit
-# def masked_update(mapped_idx, prev_val):
-#     comp_idx = prev_val['idx_map_back'][mapped_idx]
-#     # jax.debug.print('mapped_idx: {}', mapped_idx)
-#     # jax.debug.print('comp_idx: {}', comp_idx)
-#     mu = prev_val['mus'][comp_idx]
-#     rd = prev_val['rds'][comp_idx]
-#     sum_1 = prev_val['sum_1'][mapped_idx]
-#     sum_2 = prev_val['sum_2'][mapped_idx]
-#     mu, rd = single_update(mu, rd, sum_1, sum_2)
-#     mus = prev_val['mus'].at[comp_idx].set(mu)
-#     rds = prev_val['rds'].at[comp_idx].set(rd)
-#     new_val = {
-#         'mus': mus,
-#         'rds': rds,
-#         'sum_1': prev_val['sum_1'],
-#         'sum_2': prev_val['sum_2'],
-#         'idx_map': prev_val['idx_map'],
-#         'idx_map_back': prev_val['idx_map_back'],
-#     }
-#     return new_val
+@jax.jit
+def masked_update_fori(mapped_idx, prev_val):
+    comp_idx = prev_val['idx_map_back'][mapped_idx]
+    mu = prev_val['mus'][comp_idx]
+    rd = prev_val['rds'][comp_idx]
+    sum_1 = prev_val['sum_1'][mapped_idx]
+    sum_2 = prev_val['sum_2'][mapped_idx]
+    mu, rd = single_update(mu, rd, sum_1, sum_2)
+    mus = prev_val['mus'].at[comp_idx].set(mu)
+    rds = prev_val['rds'].at[comp_idx].set(rd)
+    new_val = {
+        'mus': mus,
+        'rds': rds,
+        'sum_1': prev_val['sum_1'],
+        'sum_2': prev_val['sum_2'],
+        'idx_map': prev_val['idx_map'],
+        'idx_map_back': prev_val['idx_map_back'],
+    }
+    return new_val
 
 @jax.jit
-def masked_update(mapped_idx, mus, rds, sum_1, sum_2, idx_map_back):
+def masked_update_vmap_inner(mapped_idx, mus, rds, sum_1, sum_2, idx_map_back):
     comp_idx = idx_map_back[mapped_idx]
     # jax.debug.print('mapped_idx: {}', mapped_idx)
     # jax.debug.print('comp_idx: {}', comp_idx)
@@ -97,44 +95,44 @@ def masked_update(mapped_idx, mus, rds, sum_1, sum_2, idx_map_back):
     mu, rd = single_update(mu, rd, sum_1, sum_2)
     return mu, rd
 
-# @jax.jit
-# def do_update(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep, max_competitors_per_time_step):
-#     init_val = {
-#         'mus': mus,
-#         'rds': rds,
-#         'sum_1': sum_1,
-#         'sum_2': sum_2,
-#         'idx_map': idx_map,
-#         'idx_map_back': idx_map_back,
-#     }
-#     final_val = jax.lax.fori_loop(
-#         lower=0,
-#         upper=max_competitors_per_time_step,
-#         body_fun=masked_update,
-#         init_val=init_val,
-#     )
-#     output = (
-#         final_val['mus'],
-#         final_val['rds'],
-#         jnp.zeros_like(sum_1),
-#         jnp.zeros_like(sum_2),
-#         jnp.full_like(idx_map, fill_value=-1),
-#         jnp.full_like(idx_map_back, fill_value=-1),
-#         jnp.array(0, dtype=jnp.int32),
-#     )
-#     return output
 
-@partial(jax.jit, static_argnums=(7,))
-def do_update(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep, max_competitors_per_time_step, idxs):
-    update_func = jax.vmap(
-        fun=partial(masked_update, mus=mus, rds=rds, sum_1=sum_1, sum_2=sum_2, idx_map_back=idx_map_back),
-        in_axes=(0,),
+masked_update_vmap = jax.jit(jax.vmap(
+        fun=masked_update_vmap_inner,
+        in_axes=(0,None,None,None,None,None),
         out_axes=(0,0)
-    )
-    new_mus, new_rds = update_func(idxs)
-    # jax.debug.print("new_mus: {}", new_mus)
-    # jax.debug.print("idx_map_back: {}", idx_map_back)
+    ))
 
+@jax.jit
+def do_update_fori(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep, max_competitors_per_time_step, idxs):
+    init_val = {
+        'mus': mus,
+        'rds': rds,
+        'sum_1': sum_1,
+        'sum_2': sum_2,
+        'idx_map': idx_map,
+        'idx_map_back': idx_map_back,
+    }
+    final_val = jax.lax.fori_loop(
+        lower=0,
+        upper=max_competitors_per_time_step,
+        body_fun=masked_update_fori,
+        init_val=init_val,
+    )
+    output = (
+        final_val['mus'],
+        final_val['rds'],
+        jnp.zeros_like(sum_1),
+        jnp.zeros_like(sum_2),
+        jnp.full_like(idx_map, fill_value=-1),
+        jnp.full_like(idx_map_back, fill_value=-1),
+        jnp.array(0, dtype=jnp.int32),
+    )
+    return output
+
+@jax.jit
+def do_update_vmap(mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep, max_competitors_per_time_step, idxs):
+
+    new_mus, new_rds = masked_update_vmap(idxs, mus, rds, sum_1, sum_2, idx_map_back)
     mus = mus.at[idx_map_back].set(new_mus)
     rds = rds.at[idx_map_back].set(new_rds)
     output = (
@@ -180,13 +178,10 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2, m
     outcome = prev_val['outcomes'][idx]
     update_flag = prev_val['update_mask'][idx]
 
-    # jax.debug.print("idx: {}", idx)
-    # jax.debug.print("update_flag: {}", update_flag)
-
-
     mus, rds, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_timestep = jax.lax.cond(
         update_flag,
-        do_update,
+        do_update_vmap,
+        # do_update_fori,
         do_nothing,
         mus,
         rds,
@@ -365,7 +360,8 @@ def riix_online_glicko(dataset):
     return model.ratings, model.rating_devs
 
 def main():
-    dataset = get_dataset("smash_melee", '1D')
+    dataset = get_synthetic_dataset(1_000_000, 100_000, 1_000)
+    # dataset = get_dataset("smash_melee", '1D')
     # dataset = get_dataset("starcraft2", '1D')
     # dataset = get_dataset("league_of_legends", '1D')
 
@@ -378,34 +374,43 @@ def main():
         mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
 
     with timer('raax batched glicko'):
-        mus, rds = run_batched_glicko(
+        mus_1, rds_1 = run_batched_glicko(
             matchups,
             outcomes,
             update_mask,
             num_competitors=dataset.num_competitors,
             max_competitors_per_timestep=max_competitors_per_timestep
         )
-        print(mus)
-        print(rds)
     with timer('raax batched glicko'):
-        mus, rds = run_batched_glicko(
+        mus_2, rds_2 = run_batched_glicko(
             matchups,
             outcomes,
             update_mask,
             num_competitors=dataset.num_competitors,
             max_competitors_per_timestep=max_competitors_per_timestep
         )
-        print(mus)
-        print(rds)
+    with timer('raax batched glicko'):
+        mus_3, rds_3 = run_batched_glicko(
+            matchups,
+            outcomes,
+            update_mask,
+            num_competitors=dataset.num_competitors,
+            max_competitors_per_timestep=max_competitors_per_timestep
+        )
+    with timer('raax batched glicko'):
+        mus_4, rds_4 = run_batched_glicko(
+            matchups,
+            outcomes,
+            update_mask,
+            num_competitors=dataset.num_competitors,
+            max_competitors_per_timestep=max_competitors_per_timestep
+        )
     
-    print((mus == 1500).astype(jnp.float64).mean())
-    sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
-    print(mus)
-    print(rds)
-    mus = np.asarray(mus.astype(jnp.float64))
-    rds = np.asarray(rds.astype(jnp.float64))
-    for idx in sort_idxs[:10]:
-        print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
+    # sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
+    # mus = np.asarray(mus.astype(jnp.float64))
+    # rds = np.asarray(rds.astype(jnp.float64))
+    # for idx in sort_idxs[:10]:
+    #     print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
 
     # with timer('riix online glicko'):
     #     riix_mus, riix_rds = riix_online_glicko(dataset)

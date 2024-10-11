@@ -2,7 +2,7 @@ import os
 import jax
 import jax.numpy as jnp
 import polars as pl
-from riix.utils.data_utils import MatchupDataset
+from riix.utils.data_utils import MatchupDataset, generate_matchup_data
 from datasets import load_dataset
 
 def get_dataset(game, rating_period='7D'):
@@ -19,6 +19,17 @@ def get_dataset(game, rating_period='7D'):
         outcome_col='outcome',
         datetime_col='date',
         rating_period=rating_period,
+    )
+    return dataset
+
+def get_synthetic_dataset(num_rows, num_competitors, num_rating_periods):
+    df = generate_matchup_data(num_rows, num_competitors, num_rating_periods)
+    dataset = MatchupDataset(
+        df,
+        ['competitor_1', 'competitor_2'],
+        'outcome',
+        'date',
+        rating_period='1D',
     )
     return dataset
 
