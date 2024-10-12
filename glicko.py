@@ -11,8 +11,8 @@ from riix.models.glicko import Glicko
 
 # DTYPE = jnp.float16
 # DTYPE = jnp.bfloat16
-# DTYPE = jnp.float32
-DTYPE = jnp.float64
+DTYPE = jnp.float32
+# DTYPE = jnp.float64
 
 
 @partial(jax.jit, static_argnums=(1,))
@@ -198,8 +198,8 @@ def run_online_glicko(
     mus = jnp.full(shape=(num_competitors,), fill_value=initial_mu, dtype=DTYPE)
     rds = jnp.full(shape=(num_competitors,), fill_value=initial_rd, dtype=DTYPE)
 
-    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0], dtype=DTYPE)
-    # rds = jnp.array([100.0, 30.0, 100.0, 300.0], dtype=DTYPE)
+    mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0], dtype=DTYPE)
+    rds = jnp.array([100.0, 30.0, 100.0, 300.0], dtype=DTYPE)
 
     init_val = {
         'matchups': matchups,
@@ -233,7 +233,8 @@ def run_batched_glicko(
     max_competitors_per_timestep,
     initial_mu=1500.0,
     initial_rd=350.0,
-    c=63.2,
+    c=0.0,
+    # c=63.2,
     q=math.log(10.0)/400.0,
 ):
     c2 = c ** 2.0
@@ -245,8 +246,7 @@ def run_batched_glicko(
     idx_map = jnp.full(shape=(num_competitors,), fill_value=-1, dtype=jnp.int32)
     idx_map_back = jnp.full(shape=(max_competitors_per_timestep,), fill_value=-1, dtype=jnp.int32)
     num_competitors_seen_this_timestep = jnp.array(0, dtype=jnp.int32)
-    idxs = jnp.arange(max_competitors_per_timestep)
-    
+   
     # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
     # rds = jnp.array([200.0, 30.0, 100.0, 300.0])
 
@@ -279,30 +279,36 @@ def run_batched_glicko(
     )
     return final_val['mus'], final_val['rds']
 
-def riix_online_glicko(dataset):
-    model = Glicko(
+def run_riix_glicko(dataset, mode):
+    glicko = Glicko(
         competitors=dataset.competitors,
-        update_method='iterative',
-        c=0.0,
+        update_method=mode,
     )
-    model.fit_dataset(dataset)
-    return model.ratings, model.rating_devs
+    glicko.fit_dataset(dataset)
+    return glicko.ratings, glicko.rating_devs
 
 def main():
-    dataset = get_synthetic_dataset(2_000_000, 200_000, 10_000)
-    # dataset = get_dataset("smash_melee", '1D')
+    # dataset = get_synthetic_dataset(2_000_000, 200_000, 10_000)
+    dataset = get_dataset("smash_melee", '1D')
     # dataset = get_dataset("starcraft2", '1D')
     # dataset = get_dataset("league_of_legends", '1D')
 
     matchups, outcomes, time_steps, update_mask, max_competitors_per_timestep = jax_preprocess(dataset)
     print(f"Max competitors per timestep: {max_competitors_per_timestep}")
+    n_runs = 5
+    for run in range(n_runs):
+        with timer(f'riix online glicko run: {run}'):
+            run_riix_glicko(dataset, 'iterative')
 
-    with timer('raax online glicko'):
-        mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
-    with timer('raax online glicko'):
-        mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
+    for run in range(n_runs):
+        with timer(f'raax online glicko run: {run}'):
+            mus, rds = run_online_glicko(matchups, outcomes, num_competitors=dataset.num_competitors)
 
-    n_runs = 20
+    for run in range(n_runs):
+        with timer(f'riix batched glicko run: {run}'):
+            run_riix_glicko(dataset, 'iterative')
+    
+    n_runs = 10
     for run in range(n_runs):
         with timer(f'raax batched glicko run: {run}'):
             mus, rds = run_batched_glicko(
@@ -313,12 +319,11 @@ def main():
                 max_competitors_per_timestep=max_competitors_per_timestep
             )
     
-    
-    sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
-    mus = np.asarray(mus.astype(jnp.float64))
-    rds = np.asarray(rds.astype(jnp.float64))
-    for idx in sort_idxs[:10]:
-        print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
+    # sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
+    # mus = np.asarray(mus.astype(jnp.float64))
+    # rds = np.asarray(rds.astype(jnp.float64))
+    # for idx in sort_idxs[:10]:
+    #     print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
 
     # with timer('riix online glicko'):
     #     riix_mus, riix_rds = riix_online_glicko(dataset)
@@ -335,9 +340,9 @@ def main():
     #      [0,3],
     #      [2,3]]
     # )
-    # outcomes = jnp.array([1.0, 0.0, 0.0, 1.0])
+    # outcomes = jnp.array([1.0, 0.0, 0.0])
     # update_mask = jnp.array([False, False, False, True])
-    # mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=4)
+    # mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=4, max_competitors_per_timestep=3)
 
     # print(mus)
     # print(rds)

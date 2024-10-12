@@ -8,7 +8,6 @@ from utils import timer
 from data_utils import get_dataset, jax_preprocess
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
-from riix.models.glicko import Glicko
 
 jax.default_device = jax.devices("cpu")[0]
 
@@ -61,13 +60,6 @@ def run_riix_elo(dataset, mode):
     elo.fit_dataset(dataset)
     return elo.ratings
 
-def run_riix_glicko(dataset, mode):
-    glicko = Glicko(
-        competitors=dataset.competitors,
-        update_method=mode,
-    )
-    glicko.fit_dataset(dataset)
-    return glicko.ratings
 
 @jax.jit
 def do_update(stale_ratings, fresh_ratings):
@@ -180,8 +172,3 @@ if __name__ == '__main__':
     print(np.min(np.abs(batched_riix_ratings - batched_raax_ratings)))
     print(np.max(np.abs(batched_riix_ratings - batched_raax_ratings)))
     print(np.mean(np.abs(batched_riix_ratings - batched_raax_ratings)))
-
-    with timer('online glicko'):
-        run_riix_glicko(dataset, 'iterative')
-    with timer('batched glicko'):
-        run_riix_glicko(dataset, 'batched')
