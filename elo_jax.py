@@ -1,10 +1,11 @@
+from timeit import Timer
 import math
 from functools import partial
 import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from utils import timer
+from utils import time_function
 from data_utils import get_dataset, jax_preprocess
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
@@ -73,12 +74,13 @@ def do_nothing(stale_ratings, fresh_ratings):
 def batched_elo_update(carry, x, alpha, k):
     stale_ratings = carry['stale_ratings']
     fresh_ratings = carry['fresh_ratings']
+    prev_time_step = carry['prev_time_step']
     comp_idxs = x['matchups']
-    update_flag = x['update_mask']
+    cur_time_step = x['time_steps']
     outcome = x['outcomes']
 
     stale_ratings, fresh_ratings = jax.lax.cond(
-        update_flag,
+        cur_time_step != prev_time_step,
         do_update,
         do_nothing,
         stale_ratings,
@@ -95,6 +97,7 @@ def batched_elo_update(carry, x, alpha, k):
     new_carry = {
         'stale_ratings': stale_ratings,
         'fresh_ratings': fresh_ratings,
+        'prev_time_step': cur_time_step
     }
     return new_carry, None
 
@@ -116,17 +119,18 @@ def run_online_raax_elo(matchups, outcomes, num_competitors, alpha=math.log(10.0
     new_ratings = final_val['ratings']
     return new_ratings
 
-def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors, alpha=math.log(10.0) / 400.0, k=32.0):
+def run_batched_raax_elo(matchups, outcomes, time_steps, num_competitors, alpha=math.log(10.0) / 400.0, k=32.0):
     stale_ratings = jnp.zeros(num_competitors, dtype=jnp.float64)
     fresh_ratings = jnp.zeros(num_competitors, dtype=jnp.float64)
     xs = {
         'matchups': matchups,
         'outcomes': outcomes,
-        'update_mask': update_mask,
+        'time_steps': time_steps,
     }
     init_val = {
         'stale_ratings': stale_ratings,
-        'fresh_ratings': fresh_ratings
+        'fresh_ratings': fresh_ratings,
+        'prev_time_step': 0,
     }
     final_val, _ = jax.lax.scan(
         f=partial(batched_elo_update, alpha=alpha, k=k),
@@ -139,30 +143,26 @@ def run_batched_raax_elo(matchups, outcomes, update_mask, num_competitors, alpha
 
 
 if __name__ == '__main__':
-    # dataset = get_dataset("league_of_legends", '1D')
+    dataset = get_dataset("league_of_legends", '7D')
     # dataset = get_dataset("starcraft2", '1D')
-    dataset = get_dataset("smash_melee", '1D')
+    # dataset = get_dataset("smash_melee", '1D')
 
+    matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
 
-    matchups, outcomes, time_steps, update_mask = jax_preprocess(dataset)
+    online_riix_ratings = time_function(
+        partial(run_riix_elo, dataset, 'iterative'), 'online riix elo', 10
+    )
+    online_raax_ratings = time_function(
+        partial(run_online_raax_elo, matchups, outcomes, dataset.num_competitors), 'online raax elo', 10
+    )
 
-    with timer('online riix'):
-        online_riix_ratings = run_riix_elo(dataset, 'iterative')
-    with timer('online raax'):
-        online_raax_ratings = run_online_raax_elo(matchups, outcomes, dataset.num_competitors)
-    with timer('online riix'):
-        online_riix_ratings = run_riix_elo(dataset, 'iterative')
-    with timer('online raax'):
-        online_raax_ratings = run_online_raax_elo(matchups, outcomes, dataset.num_competitors)
     print('----------------------------')
-    with timer('batched riix'):
-        batched_riix_ratings = run_riix_elo(dataset, 'batched')
-    with timer('batched raax'):
-        batched_raax_ratings = run_batched_raax_elo(matchups, outcomes, update_mask, dataset.num_competitors)
-    with timer('batched riix'):
-        batched_riix_ratings = run_riix_elo(dataset, 'batched')
-    with timer('batched raax'):
-        batched_raax_ratings = run_batched_raax_elo(matchups, outcomes, update_mask, dataset.num_competitors)
+    batched_riix_ratings = time_function(
+        partial(run_riix_elo, dataset, 'batched'), 'batched riix elo', 10
+    )
+    batched_raax_ratings = time_function(
+        partial(run_batched_raax_elo, matchups, outcomes, time_steps, dataset.num_competitors), 'batched raax elo', 10
+    )
 
     print('online diffs:')
     print(np.min(np.abs(online_riix_ratings - online_raax_ratings)))

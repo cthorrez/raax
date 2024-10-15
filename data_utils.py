@@ -34,12 +34,11 @@ def get_synthetic_dataset(num_rows, num_competitors, num_rating_periods):
     return dataset
 
 def jax_preprocess(dataset):
-    time_steps = jnp.array(dataset.time_steps)
-    update_mask = jnp.insert(jnp.diff(time_steps) != 0, 0, False)
+    time_steps = jnp.array(dataset.time_steps, dtype=jnp.int32)
     matchups = jnp.array(dataset.matchups)
     outcomes = jnp.array(dataset.outcomes)
     max_competitors_per_timestep = get_max_competitors_per_timestep(matchups, time_steps)
-    return matchups, outcomes, time_steps, update_mask, max_competitors_per_timestep
+    return matchups, outcomes, time_steps, max_competitors_per_timestep
 
 
 @jax.jit
