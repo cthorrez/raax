@@ -59,10 +59,13 @@ def online_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
 @jax.jit
 def time_update(rd2, last_played, cur_time_step, max_rd, c2):
     # TODO: WHY IS THIS SO SLOW?????
-    # time_since_played = (cur_time_step - last_played).astype(DTYPE)
-    # rd2 = jnp.minimum(rd2 + (time_since_played * c2), max_rd ** 2.0)
-    rd2 = rd2 + c2
-
+    time_since_played = (cur_time_step - last_played)
+    # jax.debug.print('{}', time_since_played)
+    rd2 = jnp.minimum(rd2 + (time_since_played * c2), max_rd ** 2.0)
+    # jax.debug.print("rd2.shape: {}", rd2.shape)
+    # jax.debug.print("last_played.shape: {}", last_played.shape)
+    # rd2 = rd2 + 1.0 / last_played
+    # rd2 = rd2 + 1.0 / rd2
     return rd2
 
 @jax.jit
@@ -81,7 +84,7 @@ def do_update(mus, rds, sum_1, sum_2, last_played, idx_map, idx_map_back, cur_ti
     new_mus, new_rds = glicko_update(active_mus, active_rd2s, sum_1[:-1], sum_2[:-1])
     mus = mus.at[idx_map_back].set(new_mus)
     rds = rds.at[idx_map_back].set(new_rds)
-    last_played = last_played.at[idx_map_back].set(cur_time_step)
+    # last_played = last_played.at[idx_map_back].set(cur_time_step)
     output = (
         mus,
         rds,
@@ -100,17 +103,18 @@ def do_nothing(mus, rds, sum_1, sum_2, last_played, idx_map, idx_map_back, cur_t
     return mus, rds, last_played, sum_1, sum_2, idx_map, idx_map_back, num_competitors_seen_this_time_step
 
 @jax.jit
-def seen_fn(comp_idx, idx_map, idx_map_back, num_competitors_seen_this_timestep):
+def seen_fn(comp_idx, idx_map, idx_map_back, last_played, cur_time_step, num_competitors_seen_this_timestep):
     mapped_idx = idx_map[comp_idx]
-    return mapped_idx, idx_map, idx_map_back, num_competitors_seen_this_timestep
+    return mapped_idx, idx_map, idx_map_back, last_played, num_competitors_seen_this_timestep
 
 @jax.jit
-def not_seen_fn(comp_idx, idx_map, idx_map_back, num_competitors_seen_this_timestep):
+def not_seen_fn(comp_idx, idx_map, idx_map_back, last_played, cur_time_step, num_competitors_seen_this_timestep):
     mapped_idx = num_competitors_seen_this_timestep.astype(jnp.int32)
     idx_map = idx_map.at[comp_idx].set(mapped_idx)
     idx_map_back = idx_map_back.at[mapped_idx].set(comp_idx.astype(jnp.int32))
+    last_played = last_played.at[comp_idx].set(cur_time_step)
     num_competitors_seen_this_timestep = num_competitors_seen_this_timestep + 1
-    return mapped_idx, idx_map, idx_map_back, num_competitors_seen_this_timestep
+    return mapped_idx, idx_map, idx_map_back, last_played, num_competitors_seen_this_timestep
 
 
 @partial(jax.jit, static_argnums=(2,3,4,5,6))
@@ -148,22 +152,26 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     idx_1 = comp_idxs[0]
     idx_2 = comp_idxs[1]
 
-    mapped_idx_1, idx_map, idx_map_back, num_competitors_seen_this_timestep = jax.lax.cond(
+    mapped_idx_1, idx_map, idx_map_back, last_played, num_competitors_seen_this_timestep = jax.lax.cond(
         idx_map[idx_1] == -1,
         not_seen_fn,
         seen_fn,
         idx_1,
         idx_map,
         idx_map_back,
+        last_played,
+        cur_time_step,
         num_competitors_seen_this_timestep
     )
-    mapped_idx_2, idx_map, idx_map_back, num_competitors_seen_this_timestep = jax.lax.cond(
+    mapped_idx_2, idx_map, idx_map_back, last_played, num_competitors_seen_this_timestep = jax.lax.cond(
         idx_map[idx_2] == -1,
         not_seen_fn,
         seen_fn,
         idx_2,
         idx_map,
         idx_map_back,
+        last_played,
+        cur_time_step,
         num_competitors_seen_this_timestep
     )
 
@@ -246,11 +254,9 @@ def run_batched_glicko(
     num_competitors,
     max_competitors_per_timestep,
     initial_mu=1500.0,
-    # initial_rd=350.0,
-    initial_rd=257.0,
+    initial_rd=350.0,
     # c=0.0,
-    # c=63.2,
-    c=24.25,
+    c=63.2,
     q=math.log(10.0)/400.0,
 ):
     c2 = c ** 2.0
@@ -263,8 +269,8 @@ def run_batched_glicko(
     idx_map = jnp.full(shape=(num_competitors,), fill_value=-1, dtype=jnp.int32)
     idx_map_back = jnp.full(shape=(max_competitors_per_timestep,), fill_value=-1, dtype=jnp.int32)
    
-    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
-    # rds = jnp.array([200.0, 30.0, 100.0, 300.0])
+    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0], dtype=DTYPE)
+    # rds = jnp.array([200.0, 30.0, 100.0, 300.0], dtype=DTYPE)
 
     init_val = {
         'matchups': matchups,
@@ -310,17 +316,20 @@ def main():
     dataset = get_dataset("smash_melee", '7D')
     # dataset = get_dataset("starcraft2", '1D')
     # dataset = get_dataset("league_of_legends", '7D')
+    # dataset = get_dataset("league_of_legends", '7D')
 
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
     print(f"Max competitors per timestep: {max_competitors_per_timestep}")
     n_runs = 3
-    time_function(partial(run_riix_glicko, dataset, 'batched'), 'riix batched glicko', n_runs)
 
-    mus, rds = time_function(
-        partial(run_online_glicko, matchups, outcomes, num_competitors=dataset.num_competitors), 'raax online glicko', n_runs
-    )
+    # online
+    # time_function(partial(run_riix_glicko, dataset, 'batched'), 'riix batched glicko', n_runs)
+    # mus, rds = time_function(
+    #     partial(run_online_glicko, matchups, outcomes, num_competitors=dataset.num_competitors), 'raax online glicko', n_runs
+    # )
 
-    time_function(partial(run_riix_glicko, dataset, 'batched'), 'riix batched glicko', n_runs)
+    # batched
+    riix_mus, riix_rds = time_function(partial(run_riix_glicko, dataset, 'batched'), 'riix batched glicko', n_runs)
 
     batched_raax_glicko_func = partial(
         run_batched_glicko,
@@ -330,23 +339,24 @@ def main():
         num_competitors=dataset.num_competitors,
         max_competitors_per_timestep=max_competitors_per_timestep
     )
-    mus, rds = time_function(batched_raax_glicko_func, 'batched raax glicko', n_runs)
+    raax_mus, raax_rds = time_function(batched_raax_glicko_func, 'batched raax glicko', n_runs)
         
-    sort_idxs = jnp.argsort(-(mus - (0.0 * rds)))
-    mus = np.asarray(mus.astype(jnp.float64))
-    rds = np.asarray(rds.astype(jnp.float64))
-    for idx in sort_idxs[:10]:
-        print(f'{dataset.competitors[idx]}: {mus[idx]:.4f}, {rds[idx]:.4f}')
+    sort_idxs = jnp.argsort(-(riix_mus - (0.0 * riix_rds)))
+    riix_mus = np.asarray(riix_mus.astype(jnp.float64))
+    riix_rds = np.asarray(riix_rds.astype(jnp.float64))
+    print('riix leaderboard')
+    for idx in sort_idxs[:5]:
+        print(f'{dataset.competitors[idx]}: {riix_mus[idx]:.4f}, {riix_rds[idx]:.4f}')
+    print()
 
-    # with timer('riix online glicko'):
-    #     riix_mus, riix_rds = riix_online_glicko(dataset)
-    # print('riix:')
-    # print(riix_mus)
-    # print(riix_rds)
-    # print('raax')
+    print('raax leaderboard')
+    sort_idxs = jnp.argsort(-(raax_mus - (0.0 * raax_rds)))
+    raax_mus = np.asarray(raax_mus.astype(jnp.float64))
+    raax_rds = np.asarray(raax_rds.astype(jnp.float64))
+    for idx in sort_idxs[:5]:
+        print(f'{dataset.competitors[idx]}: {raax_mus[idx]:.4f}, {raax_rds[idx]:.4f}')
 
-    # mus = jnp.array([1500.0, 1400.0, 1550.0, 1700.0])
-    # rds = jnp.array([100.0, 30.0, 100.0, 300.0])
+    # # example from pdf
     # matchups = jnp.array(
     #     [[0,1],
     #      [0,2],
@@ -354,9 +364,8 @@ def main():
     #      [2,3]]
     # )
     # outcomes = jnp.array([1.0, 0.0, 0.0])
-    # update_mask = jnp.array([False, False, False, True])
-    # mus, rds = run_batched_glicko(matchups, outcomes, update_mask, num_competitors=4, max_competitors_per_timestep=3)
-
+    # time_steps = jnp.array([0.0, 0.0, 0.0, 1.0], dtype=DTYPE)
+    # mus, rds = run_batched_glicko(matchups, outcomes, time_steps, num_competitors=4, max_competitors_per_timestep=3)
     # print(mus)
     # print(rds)
 
