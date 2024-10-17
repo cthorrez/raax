@@ -11,9 +11,10 @@ def get_dataset(game, rating_period='7D'):
     else:
         os.makedirs('data', exist_ok=True)
         df = load_dataset('EsportsBench/EsportsBench', split=game, revision="3.0").to_polars()
+        print(df['date'].dtype)
         df.write_parquet(f'data/{game}.parquet')
         df = df.to_pandas()
-    # df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+        print(df['date'].dtype)
     dataset = MatchupDataset(
         df=df,
         competitor_cols=['competitor_1', 'competitor_2'],
