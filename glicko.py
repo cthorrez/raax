@@ -12,8 +12,8 @@ from riix.utils.data_utils import MatchupDataset
 
 # DTYPE = jnp.float16
 # DTYPE = jnp.bfloat16
-DTYPE = jnp.float32
-# DTYPE = jnp.float64
+# DTYPE = jnp.float32
+DTYPE = jnp.float64
 
 
 @partial(jax.jit, static_argnums=(1,))
@@ -68,9 +68,12 @@ def glicko_update(mu, rd2, sum_1, sum_2):
 def do_update(mus, rds, fresh_rd2s, sum_1, sum_2, last_played, idx_map, idx_map_back, cur_time_step, num_competitors_seen_this_time_step, max_rd, c2):
     active_mus = mus[idx_map_back]
     new_mus, new_rd2s = glicko_update(active_mus, fresh_rd2s, sum_1, sum_2)
-    new_rds = jnp.sqrt(new_rd2s)
+    new_rds = new_rd2s
+    # new_rds = jnp.sqrt(new_rd2s)
     mus = mus.at[idx_map_back].set(new_mus)
     rds = rds.at[idx_map_back].set(new_rds)
+    last_played = last_played.at[idx_map_back].set(cur_time_step)
+
     output = (
         mus,
         rds,
@@ -100,12 +103,10 @@ def not_seen_fn(fresh_rd2s, rds, comp_idx, idx_map, idx_map_back, last_played, c
     idx_map = idx_map.at[comp_idx].set(mapped_idx)
     idx_map_back = idx_map_back.at[mapped_idx].set(comp_idx)
     cur_last_played = last_played[comp_idx]
-    time_since_played = cur_time_step - cur_last_played
+    time_since_played = (cur_time_step - cur_last_played) * (cur_last_played != -1)
     cur_rd = rds[comp_idx]
-    new_rd = cur_rd
-    new_rd = jnp.minimum(jnp.square(cur_rd) + (time_since_played * (63.2**2.0)), 350.0**2.0)
+    new_rd = jnp.minimum(cur_rd + (time_since_played * (63.2**2.0)), 350.0**2.0)
     fresh_rd2s = fresh_rd2s.at[mapped_idx].set(new_rd)
-    last_played = last_played.at[comp_idx].set(cur_time_step)
     num_competitors_seen_this_timestep = num_competitors_seen_this_timestep + jnp.array(1, dtype=jnp.int32)
     return fresh_rd2s, mapped_idx, idx_map, idx_map_back, last_played, num_competitors_seen_this_timestep
 
@@ -140,7 +141,7 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
         last_played,
         idx_map,
         idx_map_back,
-        cur_time_step,
+        prev_time_step,
         num_competitors_seen_this_timestep,
         max_rd,
         c2,
@@ -178,7 +179,8 @@ def batched_glicko_update(idx, prev_val, max_rd, c2, q, q2, three_q2_over_pi2):
     
     cur_mus = mus[comp_idxs]
     # cur_rds = rds[comp_idxs]
-    cur_rds_squared = jnp.array([fresh_rd2s[mapped_idx_1], fresh_rd2s[mapped_idx_2]])
+    cur_rds_squared = fresh_rd2s[idx_map[comp_idxs]]
+
 
     # cur_rds_squared = jnp.square(cur_rds)
     cur_gs = g(cur_rds_squared, three_q2_over_pi2)
@@ -264,8 +266,8 @@ def run_batched_glicko(
     c2 = c ** 2.0
     three_q2_over_pi2 = (3.0 * q**2.0) / (math.pi ** 2.0)
     mus = jnp.full(shape=(num_competitors + 1,), fill_value=initial_mu, dtype=DTYPE)
-    rds = jnp.full(shape=(num_competitors + 1,), fill_value=initial_rd, dtype=DTYPE)
-    fresh_rd2s = jnp.full(shape=(max_competitors_per_timestep + 1,), fill_value=initial_rd, dtype=DTYPE)
+    rds = jnp.full(shape=(num_competitors + 1,), fill_value=initial_rd ** 2.0, dtype=DTYPE)
+    fresh_rd2s = jnp.full(shape=(max_competitors_per_timestep + 1,), fill_value=initial_rd ** 2.0, dtype=DTYPE)
     sum_1 = jnp.zeros(shape=(max_competitors_per_timestep + 1,), dtype=DTYPE)
     sum_2 = jnp.zeros(shape=(max_competitors_per_timestep + 1,), dtype=DTYPE)
     last_played = jnp.full(shape=(num_competitors + 1,), fill_value=-1, dtype=jnp.int32)
@@ -305,7 +307,24 @@ def run_batched_glicko(
         ),
         init_val=init_val,
     )
-    return final_val['mus'][:-1], final_val['rds'][:-1]
+    # apply one more update to use all the remaining accumulated values
+    mus, rds, fresh_rd2s, last_played, sum_1, sum_2, idx_map, idx_map_back, _ = do_update(
+        final_val['mus'],
+        final_val['rds'],
+        final_val['fresh_rd2s'],
+        final_val['sum_1'],
+        final_val['sum_2'],
+        final_val['last_played'],
+        final_val['idx_map'],
+        final_val['idx_map_back'],
+        time_steps[-1],
+        final_val['num_competitors_seen_this_timestep'],
+        initial_rd,
+        c2,
+    )
+    time_since_played = (time_steps[-1] - last_played) * (last_played != -1)
+    rd2s = jnp.minimum(rds + (time_since_played * (63.2**2.0)), 350.0**2.0)
+    return mus[:-1], jnp.sqrt(rd2s[:-1])
 
 def run_riix_glicko(dataset, mode, c=0.0):
     glicko = Glicko(
@@ -317,7 +336,7 @@ def run_riix_glicko(dataset, mode, c=0.0):
     return glicko.ratings, glicko.rating_devs
 
 def main():
-    # dataset = get_synthetic_dataset(100, 10, 10)
+    # dataset = get_synthetic_dataset(100_000, 10_000, 1_000)
     dataset = get_dataset("smash_melee", '7D')
     # dataset = get_dataset("starcraft2", '1D')
     # dataset = get_dataset("league_of_legends", '7D')
@@ -354,9 +373,9 @@ def main():
     # batched
     riix_mus, riix_rds = time_function(partial(run_riix_glicko, dataset, 'batched', c), 'riix batched glicko', n_runs)
 
-    matchups = jnp.vstack([matchups, jnp.array([[dataset.num_competitors, dataset.num_competitors]])]).astype(jnp.int32)
-    outcomes = jnp.concat([outcomes, jnp.array([0.0], dtype=DTYPE)])
-    time_steps = jnp.concat([time_steps, jnp.array([time_steps[-1]]) + 1]).astype(jnp.int32)
+    # matchups = jnp.vstack([matchups, jnp.array([[dataset.num_competitors, dataset.num_competitors]])]).astype(jnp.int32)
+    # outcomes = jnp.concat([outcomes, jnp.array([0.0], dtype=DTYPE)])
+    # time_steps = jnp.concat([time_steps, jnp.array([time_steps[-1]]) + 1]).astype(jnp.int32)
 
     batched_raax_glicko_func = partial(
         run_batched_glicko,
@@ -368,25 +387,63 @@ def main():
         c=c,
     )
     raax_mus, raax_rds = time_function(batched_raax_glicko_func, 'batched raax glicko', n_runs)
-        
-    sort_idxs = jnp.argsort(-(riix_mus - (0.0 * riix_rds)))
+    
+    top_k = 10
     riix_mus = np.asarray(riix_mus.astype(jnp.float64))
     riix_rds = np.asarray(riix_rds.astype(jnp.float64))
+    riix_sort_idxs = jnp.argsort(-(riix_mus - (0.0 * riix_rds)))
     print('riix leaderboard')
-    for idx in sort_idxs[:10]:
+    for idx in riix_sort_idxs[:top_k]:
         print(f'{dataset.competitors[idx]}: {riix_mus[idx]:.4f}, {riix_rds[idx]:.4f}')
     print()
-
-    print('raax leaderboard')
-    sort_idxs = jnp.argsort(-(raax_mus - (0.0 * raax_rds)))
+    
     raax_mus = np.asarray(raax_mus.astype(jnp.float64))
     raax_rds = np.asarray(raax_rds.astype(jnp.float64))
-    for idx in sort_idxs[:10]:
+    raax_sort_idxs = jnp.argsort(-(raax_mus - (0.0 * raax_rds)))
+    print('raax leaderboard')
+    for idx in raax_sort_idxs[:top_k]:
         print(f'{dataset.competitors[idx]}: {raax_mus[idx]:.4f}, {raax_rds[idx]:.4f}')
 
+    mu_diff = np.array(jnp.abs(riix_mus - raax_mus))
+    print(f'(min, mean, max) absolute mu diff: ({mu_diff.min()}, {mu_diff.mean()}, {mu_diff.max()})')
+    rd_diff = jnp.abs(riix_rds - raax_rds)
+    print(f'(min, mean, max) absolute rd diff: ({rd_diff.min()}, {rd_diff.mean()}, {rd_diff.max()})')
 
-    mean_mu_diff = jnp.mean(jnp.abs(riix_mus - raax_mus))
-    print(mean_mu_diff)
+    idx = jnp.argsort(mu_diff)[-1]
+    print(dataset.competitors[idx], riix_mus[idx], raax_mus[idx], riix_rds[idx], raax_rds[idx])
+
+    import matplotlib.pyplot as plt
+    abs_diffs = mu_diff
+
+    epsilon = 1e-10
+    abs_diffs_adj = abs_diffs + epsilon
+
+    # plt.figure(figsize=(12, 8))
+
+    # # Create histogram with linear bins
+    # n, bins, patches = plt.hist(abs_diffs_adj, bins=1000, edgecolor='black')
+
+    # plt.xscale('symlog', linthresh=1.0)  # Symmetric log scale
+    # plt.yscale('symlog', linthresh=1.0)  # Symmetric log scale for y-axis too
+
+    # plt.title('Distribution of Absolute Differences (Symlog Scale)')
+    # plt.xlabel('Absolute Difference (Symlog Scale)')
+    # plt.ylabel('Frequency (Symlog Scale)')
+    # plt.grid(True, which="both", ls="-", alpha=0.2)
+
+    # # Add text to point out the outliers
+    # plt.text(0.95, 0.95, f"Max diff: {abs_diffs.max():.2f}", 
+    #         transform=plt.gca().transAxes, ha='right', va='top')
+
+    # # Adjust x-axis ticks
+    # x_ticks = [0] + list(np.logspace(-3, np.log10(abs_diffs.max()), num=20))
+    # plt.xticks(x_ticks, [f"{x:.1e}" for x in x_ticks])
+
+    # plt.tight_layout()
+    # plt.show()
+
+    # print(riix_mus)
+    # print(raax_mus)
 
     # # example from pdf
     # matchups = jnp.array(
