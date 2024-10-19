@@ -1,8 +1,10 @@
-from timeit import Timer
+import os
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=1"
 import math
 from functools import partial
 import numpy as np
 import jax
+jax.default_device = jax.devices("cpu")[0]
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from utils import time_function
@@ -10,7 +12,6 @@ from data_utils import get_dataset, jax_preprocess
 from riix.utils.data_utils import MatchupDataset
 from riix.models.elo import Elo
 
-jax.default_device = jax.devices("cpu")[0]
 
 
 def sigmoid(x):
