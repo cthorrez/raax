@@ -1,6 +1,10 @@
+import os
+os.environ["XLA_FLAGS"] = "--xla_force_host_platform_device_count=1"
 import numpy as np
 import jax
+jax.default_device = jax.devices("cpu")[0]
 jax.config.update("jax_enable_x64", True)
+jax.config.update('jax_platform_name', 'cpu')
 import math
 from functools import partial
 import jax.numpy as jnp
@@ -14,6 +18,7 @@ from riix.utils.data_utils import MatchupDataset
 # DTYPE = jnp.bfloat16
 DTYPE = jnp.float32
 # DTYPE = jnp.float64
+
 
 
 @partial(jax.jit, static_argnums=(1,))
