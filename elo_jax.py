@@ -6,6 +6,7 @@ import numpy as np
 import jax
 jax.default_device = jax.devices("cpu")[0]
 jax.config.update("jax_enable_x64", True)
+jax.config.update('jax_platform_name', 'cpu')
 import jax.numpy as jnp
 from utils import time_function
 from data_utils import get_dataset, jax_preprocess
@@ -144,9 +145,9 @@ def run_batched_raax_elo(matchups, outcomes, time_steps, num_competitors, alpha=
 
 
 if __name__ == '__main__':
-    dataset = get_dataset("league_of_legends", '7D')
+    # dataset = get_dataset("league_of_legends", '7D')
     # dataset = get_dataset("starcraft2", '1D')
-    # dataset = get_dataset("smash_melee", '1D')
+    dataset = get_dataset("smash_melee", '1D')
 
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
 
