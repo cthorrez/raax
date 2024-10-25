@@ -12,8 +12,8 @@ def time_function(func, label, runs=5):
         times[idx] = end - start
       
     # drop the first run to exclude compile time of jitted implementation
-    # if runs > 1:
-    #     times = times[1:]
+    if runs > 1:
+        times = times[1:]
     avg_time = np.mean(times)
     std_dev = np.std(times)
     print(f"{label} average time: {avg_time:.5f} (s) ± {std_dev:.5f} (s)")

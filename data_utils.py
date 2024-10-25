@@ -8,7 +8,7 @@ from datasets import load_dataset
 
 def get_dataset(game, rating_period='7D'):
     if game == 'slippi':
-        df = pd.read_csv('../slippi-ratings/chartslp.csv')
+        df = pd.read_csv('data/chartslp.csv')
         dataset = MatchupDataset(
             df=df,
             competitor_cols=['player_1_code', 'player_2_code'],

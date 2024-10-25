@@ -347,9 +347,11 @@ def main():
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
     print(f"Max competitors per timestep: {max_competitors_per_timestep}")
     # initial_rd = 350.0
-    initial_rd = 258.82
+    # initial_rd = 258.82
+    initial_rd = 50.0
     # c = 63.2
-    c = 9.19
+    # c = 9.19
+    c = 2.0
     # c = 0.0
     n_runs = 4
 
