@@ -145,16 +145,16 @@ def run_batched_raax_elo(matchups, outcomes, time_steps, num_competitors, alpha=
 
 
 if __name__ == '__main__':
-    # dataset = get_dataset("league_of_legends", '7D')
+    dataset = get_dataset("league_of_legends", '7D')
     # dataset = get_dataset("starcraft2", '1D')
     # dataset = get_dataset("smash_melee", '1D')
-    dataset = get_dataset('slippi', rating_period='1D')
+    # dataset = get_dataset('slippi', rating_period='1D')
 
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
 
     repetitions = 4
     online_riix_ratings = time_function(
-        partial(run_riix_elo, dataset, 'iterative'), 'online riix elo', repetitions
+        partial(run_riix_elo, dataset, 'online'), 'online riix elo', repetitions
     )
     online_raax_ratings = time_function(
         partial(run_online_raax_elo, matchups, outcomes, dataset.num_competitors), 'online raax elo', repetitions

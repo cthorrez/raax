@@ -341,8 +341,8 @@ def main():
     # dataset = get_synthetic_dataset(100_000, 10_000, 1_000)
     # dataset = get_dataset("smash_melee", '7D')
     # dataset = get_dataset("starcraft2", '1D')
-    # dataset = get_dataset("league_of_legends", '7D')
-    dataset = get_dataset('slippi', rating_period='1D')
+    dataset = get_dataset("league_of_legends", '7D')
+    # dataset = get_dataset('slippi', rating_period='1D')
 
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
     print(f"Max competitors per timestep: {max_competitors_per_timestep}")
@@ -356,7 +356,7 @@ def main():
     n_runs = 4
 
     # online
-    time_function(partial(run_riix_glicko, dataset, 'iterative', initial_rd, c), 'riix online glicko', n_runs)
+    time_function(partial(run_riix_glicko, dataset, 'online', initial_rd, c), 'riix online glicko', n_runs)
     mus, rds = time_function(
         partial(run_online_glicko, matchups, outcomes, num_competitors=dataset.num_competitors, initial_rd=initial_rd, c=c), 'raax online glicko', n_runs
     )

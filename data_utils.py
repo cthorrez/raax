@@ -2,13 +2,12 @@ import os
 import jax
 import jax.numpy as jnp
 import polars as pl
-import pandas as pd
 from riix.utils.data_utils import MatchupDataset, generate_matchup_data
 from datasets import load_dataset
 
 def get_dataset(game, rating_period='7D'):
     if game == 'slippi':
-        df = pd.read_csv('data/chartslp.csv')
+        df = pl.read_csv('data/chartslp.csv')
         dataset = MatchupDataset(
             df=df,
             competitor_cols=['player_1_code', 'player_2_code'],
@@ -20,14 +19,12 @@ def get_dataset(game, rating_period='7D'):
 
 
     if os.path.exists(f'data/{game}.parquet'):
-        df = pl.read_parquet(f'data/{game}.parquet').to_pandas()
+        df = pl.read_parquet(f'data/{game}.parquet')
     else:
         os.makedirs('data', exist_ok=True)
         df = load_dataset('EsportsBench/EsportsBench', split=game, revision="3.0").to_polars()
         print(df['date'].dtype)
         df.write_parquet(f'data/{game}.parquet')
-        df = df.to_pandas()
-        print(df['date'].dtype)
     dataset = MatchupDataset(
         df=df,
         competitor_cols=['competitor_1', 'competitor_2'],

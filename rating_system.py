@@ -1,53 +1,37 @@
 import jax
 import jax.numpy as jnp
 
-class RatingSystem:
-    def __init__(self, competitors, update_fn):
+class OnlineRatingSystem:
+    def __init__(self, competitors):
         self.competitors = competitors
         self.num_competitors = len(competitors)
-        self.ratings = jnp.zeros(shape=self.num_competitors, dtype=jnp.float32)
-        self.update_fn = update_fn
 
-    def fit(self, time_steps, schedule, outcomes):
-        final_state = jax.lax.scan(
-            f = self.update_fn,
-            init = self.ratings,
-            xs = {
-                't' : None,
-                'schedule' : schedule,
-                'outcomes' : outcomes,
-            }
-        )
-
-def sigmoid(x):
-    return 1.0 / (1.0 + jnp.exp(-x))
-
-
-def elo_loss(idx, c, ratings, schedule, outcomes):
+    def initialize_state(self):
+        raise NotImplementedError()
     
-    matchups = jax.lax.dynamic_slice_in_dim(
-        schedule[:,1:],
-        start_index=idx,
-        slice_size=c,
-        axis=0,
-    )
-    t_outcomes = outcomes[idx:idx+c]
+    def update(self, idx_a, idx_b, time_step, outcome, state):
+        raise NotImplementedError
+    
+    def _update(self, state, x):
+        (idx_a, idx_b), time_step, outcome = x
+        new_state, prob = self.update(idx_a, idx_b, time_step, outcome, state)
+        return new_state, prob
+        
 
-    matchup_ratings = ratings[matchups]
-    logits = matchup_ratings[:,0] - matchup_ratings[:,1]
-    probs = sigmoid(logits)
-    loss = t_outcomes * jnp.log(probs) + (1.0 - t_outcomes) * jnp.log(1.0 - probs)
-    return loss
+    def fit(self, matches, time_steps, outcomes):
+        init_state = self.initialize_state()
+        final_state, probs = jax.lax.scan(
+            f = self._update,
+            init = init_state,
+            xs = (
+                matches,
+                time_steps,
+                outcomes
+            )
+        )
+        return final_state, probs
 
-elo_grad = jax.grad(elo_loss, argnums=(2,))
 
-def elo_update(carry, idx):
-    ratings, schedule, outcomes, ts, t_idxs, counts = carry
-    t_idx = t_idxs[idx]
-    c = counts[idx]
-    grad = elo_grad(t_idx, c, ratings, schedule=schedule, outcomes=outcomes)
-    new_ratings = ratings + grad
-    return (new_ratings, schedule, outcomes), None
 
 if __name__ == '__main__':
     C = 4
