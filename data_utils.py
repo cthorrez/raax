@@ -22,7 +22,7 @@ def get_dataset(game, rating_period='7D'):
         df = pl.read_parquet(f'data/{game}.parquet')
     else:
         os.makedirs('data', exist_ok=True)
-        df = load_dataset('EsportsBench/EsportsBench', split=game, revision="3.0").to_polars()
+        df = load_dataset('EsportsBench/EsportsBench', split=game, revision="3.1").to_polars()
         print(df['date'].dtype)
         df.write_parquet(f'data/{game}.parquet')
     dataset = MatchupDataset(
