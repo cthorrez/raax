@@ -36,17 +36,19 @@ class OnlineRatingSystem:
     
     def sweep(self, matches, time_steps, outcomes, sweep_params):
   
+        @jax.jit
         def run_single(matches, time_steps, outcomes, params):
             final_state, probs = self.fit(matches, time_steps, outcomes, **params)
             return final_state, probs
 
         in_axes = (None, None, None, {param: 0 for param in sweep_params})
-        run_many = jax.vmap(run_single, in_axes=in_axes)
+        run_many = jax.jit(jax.vmap(run_single, in_axes=in_axes))
 
         many_states, many_probs = run_many(matches, time_steps, outcomes, sweep_params)
         loss = log_loss(many_probs, jnp.expand_dims(outcomes, 0), axis=1)
         acc = accuracy(many_probs, jnp.expand_dims(outcomes, 0), axis=1)
-        best_idx = jnp.nanargmin(loss)
+        # best_idx = jnp.nanargmin(loss)
+        best_idx = jnp.nanargmax(acc)
         print('best metrics:')
         print(f'acc: {acc[best_idx].item():.4f}')
         print(f'log loss: {loss[best_idx].item():.4f}')

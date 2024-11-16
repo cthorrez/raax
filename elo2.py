@@ -36,7 +36,9 @@ class Elo(OnlineRatingSystem):
         return state, prob
 
 if __name__ == '__main__':
-    dataset = get_dataset("smash_melee", '7D')
+    # dataset = get_dataset("smash_melee", '7D')
+    dataset = get_dataset("league_of_legends", '7D')
+
 
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
 
@@ -46,18 +48,18 @@ if __name__ == '__main__':
     # acc = ((probs >= 0.5) == outcomes).mean()
     # print(f'acc: {acc:.4f}')
 
-    n_samples = 10000
+    n_samples = 500
     rng = jax.random.PRNGKey(0)
-    # sweep_params = {
-    #     'k': jax.random.uniform(rng, shape=(n_samples,), minval=2.0, maxval=128.0),
-    #     'scale': jax.random.uniform(rng, shape=(n_samples,), minval=10.0, maxval=500.0),
-    #     'base': jax.random.uniform(rng, shape=(n_samples,), minval=2.0, maxval=20.0),
-    # }
     sweep_params = {
-        'k': jax.random.uniform(rng, shape=(n_samples,), minval=85.0, maxval=100.0),
-        'scale': jax.random.uniform(rng, shape=(n_samples,), minval=360.0, maxval=400.0),
-        'base': jax.random.uniform(rng, shape=(n_samples,), minval=13.0, maxval=16.0),
+        'k': jax.random.uniform(rng, shape=(n_samples,), minval=2.0, maxval=128.0),
+        'scale': jax.random.uniform(rng, shape=(n_samples,), minval=10.0, maxval=500.0),
+        'base': jax.random.uniform(rng, shape=(n_samples,), minval=2.0, maxval=20.0),
     }
+    # sweep_params = {
+    #     'k': jax.random.uniform(rng, shape=(n_samples,), minval=85.0, maxval=100.0),
+    #     'scale': jax.random.uniform(rng, shape=(n_samples,), minval=360.0, maxval=400.0),
+    #     'base': jax.random.uniform(rng, shape=(n_samples,), minval=13.0, maxval=16.0),
+    # }
     all_ratings, all_probs, best_idx = elo.sweep(matchups, None, outcomes, sweep_params)
 
     mean_probs = all_probs.mean(axis=0)
