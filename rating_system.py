@@ -57,10 +57,5 @@ class OnlineRatingSystem:
             print(f'  {param}: {vals[best_idx]}')
         return many_states, many_probs, best_idx
 
-
-
 if __name__ == '__main__':
     pass
-
-
-

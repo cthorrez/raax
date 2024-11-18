@@ -3,6 +3,7 @@ import jax
 import jax.numpy as jnp
 from riix.utils.data_utils import MatchupDataset
 from rating_system import OnlineRatingSystem
+import time
 from utils import time_function
 from metrics import accuracy, log_loss
 from data_utils import get_dataset, jax_preprocess
@@ -43,12 +44,14 @@ if __name__ == '__main__':
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
 
     elo = Elo(dataset.competitors)
-    # ratings, probs = elo.fit(matchups, None, outcomes)
-    # print(ratings, probs)
-    # acc = ((probs >= 0.5) == outcomes).mean()
-    # print(f'acc: {acc:.4f}')
+    start_time = time.time()
+    ratings, probs = elo.fit(matchups, None, outcomes)
+    acc = ((probs >= 0.5) == outcomes).mean()
+    duration = time.time() - start_time
+    print(f'duration (s): {duration}')
+    print(f'acc: {acc:.4f}')
 
-    n_samples = 500
+    n_samples = 100
     rng = jax.random.PRNGKey(0)
     sweep_params = {
         'k': jax.random.uniform(rng, shape=(n_samples,), minval=2.0, maxval=128.0),
@@ -60,12 +63,16 @@ if __name__ == '__main__':
     #     'scale': jax.random.uniform(rng, shape=(n_samples,), minval=360.0, maxval=400.0),
     #     'base': jax.random.uniform(rng, shape=(n_samples,), minval=13.0, maxval=16.0),
     # }
+    start_time = time.time()
     all_ratings, all_probs, best_idx = elo.sweep(matchups, None, outcomes, sweep_params)
+    # all_ratings, all_probs, best_idx = elo.sweep2(matchups, None, outcomes, sweep_params)
+    duration = time.time() - start_time
+    print(f'duration (s): {duration}')
 
-    mean_probs = all_probs.mean(axis=0)
-    acc = accuracy(mean_probs, outcomes)
-    loss = log_loss(mean_probs, outcomes)
-    print(f'mean acc: {acc:.4f}')
-    print(f'mean log loss: {loss:.4f}')
+    # mean_probs = all_probs.mean(axis=0)
+    # acc = accuracy(mean_probs, outcomes)
+    # loss = log_loss(mean_probs, outcomes)
+    # print(f'mean acc: {acc:.4f}')
+    # print(f'mean log loss: {loss:.4f}')
 
 
