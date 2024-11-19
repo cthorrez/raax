@@ -27,24 +27,25 @@ class Elo(OnlineRatingSystem):
     def get_init_state(self, initial_rating, **kwargs):
         return jnp.full(shape=(self.num_competitors,), fill_value=initial_rating, dtype=jnp.float32)
 
-    def update(self, idx_a, idx_b, time_step, outcome, state, k, alpha, **kwargs):
-        r_a = state[idx_a]
-        r_b = state[idx_b]
+    def update(self, c_idxs, time_step, outcome, state, k, alpha, **kwargs):
+        r_a, r_b = state[c_idxs]
         prob = jax.nn.sigmoid(alpha * (r_a - r_b))
         update = k * (outcome - prob)
-        state = state.at[idx_a].add(update)
-        state = state.at[idx_b].add(-update)
+        state = state.at[c_idxs[0]].add(update)
+        state = state.at[c_idxs[1]].add(-update)
         return state, prob
 
 if __name__ == '__main__':
     # dataset = get_dataset("smash_melee", '7D')
-    dataset = get_dataset("league_of_legends", '7D')
+    # dataset = get_dataset("league_of_legends", '7D')
+    dataset = get_dataset("smash_melee", '7D')
+
 
 
     matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
 
-    elo = Elo(dataset.competitors)
     start_time = time.time()
+    elo = Elo(dataset.competitors)
     ratings, probs = elo.fit(matchups, None, outcomes)
     acc = ((probs >= 0.5) == outcomes).mean()
     duration = time.time() - start_time

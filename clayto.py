@@ -3,7 +3,7 @@ import math
 import jax
 import jax.numpy as jnp
 from functools import partial
-from data_utils import gimmie_data
+from data_utils import get_dataset, jax_preprocess
 
 jax.config.update("jax_enable_x64", True)
 
@@ -52,7 +52,6 @@ class RatingSystem:
         return final_val, probs
 
     def sweep(self, matchups, outcomes, sweep_params):
-        start_time = time.time()
         fixed_params = {k: v for k, v in self.params.items() if k not in sweep_params}
 
         def run_single(matchups, outcomes, sweep_params):
@@ -68,8 +67,6 @@ class RatingSystem:
         accuracy = acc(final_probs, jnp.expand_dims(outcomes, 0), axis=1)
         # best_idx = jnp.nanargmax(accuracy)
         best_idx = jnp.nanargmin(loss)
-        duration = time.time() - start_time
-        print(f'duration (s): {duration:0.4f}')
         for param, vals in sweep_params.items():
             print(f'best {param}: {vals[best_idx]}')
         return final_vals, final_probs, best_idx
@@ -194,41 +191,47 @@ class Omnelo(RatingSystem):
         return (new_locs, new_scales), prob
         
 def main():
-    game = 'league_of_legends'
+    # game = 'league_of_legends'
     # game = 'tetris'
     # game = 'starcraft2'
-    # game = 'smash_melee'
+    game = 'smash_melee'
     # game = 'dota2'
     # game = 'rocket_league'
     # game = 'street_fighter'
 
-    matchups, outcomes, num_competitors = gimmie_data(game)
+    dataset = get_dataset(game)
+    matchups, outcomes, time_steps, max_competitors_per_timestep = jax_preprocess(dataset)
     test_frac = 0.2
     test_idx = int(matchups.shape[0] * (1.0 - test_frac))
+    num_samples = 100
     # elo_scale = 1.0
     # elo_k = 0.025
     elo_scale = 400.0
     elo_k = 32.0
 
-    elo = Elo(num_competitors=num_competitors)
-    sweep_params = generate_hyperparam_grid({'scale' : (100,800), 'k' : {16, 128}}, num_samples=100)
+    print('Elo:')
+    start_time = time.time()
+    elo = Elo(num_competitors=dataset.num_competitors)
+    sweep_params = generate_hyperparam_grid({'scale' : (100,800), 'k' : {16, 128}}, num_samples=num_samples)
     locs, probs, best_idx = elo.sweep(matchups, outcomes, sweep_params)
-
-    print('locs:', locs[best_idx].min(), locs[best_idx].max())
-    print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
+    # print('locs:', locs[best_idx].min(), locs[best_idx].max())
+    # print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
     print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
     print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
+    print(f'duration (s): {time.time() - start_time:.4f}')
 
     clayto_scale = elo_scale / math.sqrt(2.0)
     clayto_lr = elo_k / (math.log(10.0) / elo_scale)
 
-    clayto = Clayto(num_competitors=num_competitors)
+    print('Clayto:')
+    start_time = time.time()
+    clayto = Clayto(num_competitors=dataset.num_competitors)
     scale_ranges = (100 / math.sqrt(2.0), 800 / math.sqrt(2))
     lr_ranges = (16 / (math.log(10.0) / 100), 128 / (math.log(10.0) / 800))
     
     sweep_params = generate_hyperparam_grid(
         {'scale' : scale_ranges, 'lr' : lr_ranges},
-        num_samples=100
+        num_samples=num_samples
     )
     
     (locs, scales), probs, best_idx = clayto.sweep(matchups, outcomes, sweep_params)
@@ -237,9 +240,13 @@ def main():
     print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
     print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
     print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
+    print(f'duration (s): {time.time() - start_time:.4f}')
 
+
+    print('Omnelo')
+    start_time = time.time()
     omnelo = Omnelo(
-        num_competitors=num_competitors,
+        num_competitors=dataset.num_competitors,
         scale_lr=0.0,
         cdf=jax.scipy.stats.logistic.cdf
     )
@@ -265,7 +272,7 @@ def main():
             'loc_lr' : loc_lr_ranges,
             'scale_lr': scale_lr_ranges,
         },
-        num_samples=5000
+        num_samples=num_samples
     )
     
     (locs, scales), probs, best_idx = omnelo.sweep(matchups, outcomes, sweep_params)
@@ -274,6 +281,7 @@ def main():
     print('probs', probs[best_idx].min(), probs[best_idx].mean(), probs[best_idx].max())
     print('log loss', log_loss(probs[best_idx, test_idx:], outcomes[test_idx:]))
     print('acc', acc(probs[best_idx, test_idx:], outcomes[test_idx:]))
+    print(f'duration (s): {time.time() - start_time:.4f}')
 
 
 
