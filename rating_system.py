@@ -11,7 +11,8 @@ class OnlineRatingSystem:
     def get_init_state(self, **kwargs):
         raise NotImplementedError()
     
-    def update(self, c_idxs, time_step, outcome, state, **kwargs):
+    @staticmethod
+    def update(c_idxs, time_step, outcome, state, **kwargs):
         raise NotImplementedError
     
     def _update(self, state, x, **kwargs):
@@ -58,55 +59,31 @@ class OnlineRatingSystem:
         return many_states, many_probs, best_idx
     
     def sweep2(self, matches, time_steps, outcomes, sweep_params):
-        # First, create a vectorized version of the update function that operates
-        # across all parameter combinations at once
-        @partial(jax.vmap, in_axes=(0, 0, None, None, None, None))
-        def batch_update(states, param_dicts, idx_a, idx_b, time_step, outcome):
-            new_state, prob = self.update(idx_a, idx_b, time_step, outcome, states, **param_dicts)
-            return new_state, prob
-
-        # Prepare initial states for all parameter combinations
-        param_keys = list(sweep_params.keys())
-        param_values = list(sweep_params.values())
-        num_combinations = len(param_values[0])
+        num_combinations = len(next(iter(sweep_params.values())))
+        param_arrays = {
+            **{k: jnp.full(num_combinations, v) for k, v in self.params.items()},
+            **{k: jnp.array(v) for k, v in sweep_params.items()}
+        }
         
-        # Create a list of parameter dictionaries for each combination,
-        # starting with the base params and updating with sweep params
-        param_dicts = []
-        for i in range(num_combinations):
-            params = self.params.copy()  # Start with base params
-            params.update({k: sweep_params[k][i] for k in param_keys})  # Update with sweep params
-            param_dicts.append(params)
-        
-        # Convert param_dicts into a dictionary of arrays
-        param_arrays = {k: jnp.array([d[k] for d in param_dicts]) for k in self.params.keys()}
-        
-        # Initialize states for all parameter combinations using vmapped get_init_state
         init_states = jax.vmap(self.get_init_state)(**param_arrays)
+        batch_update = jax.vmap(self.update, in_axes=(None, None, None, 0))
         
-        # Define the scan function that will apply batch_update at each time step
         def scan_fn(carry, x):
-            states, param_arrays = carry
-            (idx_a, idx_b), time_step, outcome = x
-            new_states, probs = batch_update(states, param_arrays, idx_a, idx_b, time_step, outcome)
-            return (new_states, param_arrays), probs
+            states, params = carry
+            c_idxs, time_step, outcome = x
+            new_states, probs = batch_update(c_idxs, time_step, outcome, states, **params)
+            return (new_states, params), probs
 
-        # Run the scan over time steps with batched parameters
-        (final_states, _), many_probs = jax.lax.scan(
-            f=scan_fn,
-            init=(init_states, param_arrays),
-            xs=(matches, time_steps, outcomes)
+        (final_states, _), probs = jax.lax.scan(
+            scan_fn,
+            (init_states, param_arrays),
+            (matches, time_steps, outcomes)
         )
 
-        # Transpose many_probs once to get shape (n_params, n_matches)
-        many_probs = many_probs.T
-        
-        # Compute metrics using the transposed probs
-        loss = log_loss(many_probs, jnp.expand_dims(outcomes, 0), axis=1)
-        acc = accuracy(many_probs, jnp.expand_dims(outcomes, 0), axis=1)
+        probs = probs.T
+        loss = log_loss(probs, jnp.expand_dims(outcomes, 0), axis=1)
+        acc = accuracy(probs, jnp.expand_dims(outcomes, 0), axis=1)
         best_idx = jnp.nanargmax(acc)
-
-        # Print results (keeping the same format as original sweep)
         print('best metrics:')
         print(f'acc: {acc[best_idx].item():.4f}')
         print(f'log loss: {loss[best_idx].item():.4f}')
@@ -114,7 +91,7 @@ class OnlineRatingSystem:
         for param, vals in sweep_params.items():
             print(f'  {param}: {vals[best_idx]}')
 
-        return final_states, many_probs, best_idx
+        return final_states, probs, best_idx
 
 if __name__ == '__main__':
     pass

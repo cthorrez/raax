@@ -52,8 +52,9 @@ class Clayto(OnlineRatingSystem):
         state = state.at[1].set(initial_scale)  # scale
         return state
 
-    @partial(jax.jit, static_argnums=(0,))
-    def update(self, c_idxs, time_step, outcome, state, loc_lr, scale_lr, alpha, **kwargs):
+    @staticmethod
+    @jax.jit
+    def update(c_idxs, time_step, outcome, state, loc_lr, scale_lr, alpha, **kwargs):
         # Extract loc and scale from state
         loc = state[0, c_idxs]
         scale = state[1, c_idxs]
@@ -92,7 +93,7 @@ if __name__ == '__main__':
     print(f'log loss: {loss_val:.4f}')
 
 
-    n_samples = 1000
+    n_samples = 100
     rng = jax.random.PRNGKey(0)
     sweep_params = {
         'init_scale': jax.random.uniform(rng, shape=(n_samples,), minval=600, maxval=1000.0),
@@ -100,7 +101,7 @@ if __name__ == '__main__':
         'scale_lr': jax.random.uniform(rng, shape=(n_samples,), minval=2048.0, maxval=8296.0),
     }
     start_time = time.time()
-    all_ratings, all_probs, best_idx = clayto.sweep(matchups, None, outcomes, sweep_params)
+    all_ratings, all_probs, best_idx = clayto.sweep2(matchups, None, outcomes, sweep_params)
 
     duration = time.time() - start_time
     print(f'duration (s): {duration}')

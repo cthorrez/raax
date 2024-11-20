@@ -27,7 +27,9 @@ class Elo(OnlineRatingSystem):
     def get_init_state(self, initial_rating, **kwargs):
         return jnp.full(shape=(self.num_competitors,), fill_value=initial_rating, dtype=jnp.float32)
 
-    def update(self, c_idxs, time_step, outcome, state, k, alpha, **kwargs):
+    @staticmethod
+    @jax.jit
+    def update(c_idxs, time_step, outcome, state, k, alpha, **kwargs):
         r_a, r_b = state[c_idxs]
         prob = jax.nn.sigmoid(alpha * (r_a - r_b))
         update = k * (outcome - prob)
@@ -52,7 +54,7 @@ if __name__ == '__main__':
     print(f'duration (s): {duration}')
     print(f'acc: {acc:.4f}')
 
-    n_samples = 100
+    n_samples = 1000
     rng = jax.random.PRNGKey(0)
     sweep_params = {
         'k': jax.random.uniform(rng, shape=(n_samples,), minval=2.0, maxval=128.0),
@@ -65,8 +67,7 @@ if __name__ == '__main__':
     #     'base': jax.random.uniform(rng, shape=(n_samples,), minval=13.0, maxval=16.0),
     # }
     start_time = time.time()
-    all_ratings, all_probs, best_idx = elo.sweep(matchups, None, outcomes, sweep_params)
-    # all_ratings, all_probs, best_idx = elo.sweep2(matchups, None, outcomes, sweep_params)
+    all_ratings, all_probs, best_idx = elo.sweep2(matchups, None, outcomes, sweep_params)
     duration = time.time() - start_time
     print(f'duration (s): {duration}')
 
