@@ -20,6 +20,7 @@ class OnlineRatingSystem:
         new_state, prob = self.update(c_idxs, time_step, outcome, state, **kwargs)
         return new_state, prob
 
+    @partial(jax.jit, static_argnums=(0,))
     def fit(self, matches, time_steps, outcomes, **overrides):
         merged_params = {**self.params, **overrides}
         init_state = self.get_init_state(**merged_params)

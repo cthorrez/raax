@@ -120,6 +120,15 @@ if __name__ == '__main__':
     duration = time.time() - start_time
     print(f'duration (s): {duration}')
 
+    start_time = time.time()
+    ratings, probs = glicko.fit(matchups, time_steps, outcomes)
+    acc = accuracy(probs, outcomes)
+    loss = log_loss(probs, outcomes)
+    print(f'acc: {acc:.4f}')
+    print(f'log_loss: {loss:.4f}')
+    duration = time.time() - start_time
+    print(f'duration (s): {duration}')
+
 
     # n_samples = 1000
     # rng = jax.random.PRNGKey(0)
